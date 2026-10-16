@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
@@ -11,9 +13,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-DEFAULT_CONFIG_DIR = Path("config")
+# src/aggregator/config.py -> project root, so the default does not depend on the working directory
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CONFIG_DIR = PROJECT_ROOT / "config"
+CONFIG_DIR_ENV_VAR = "AGGREGATOR_CONFIG_DIR"
 SETTINGS_FILE = "settings.yaml"
 SOURCES_FILE = "sources.yaml"
+RECIPIENT_ENV_VAR = "RECIPIENT_EMAIL"
 
 
 class ConfigError(Exception):
@@ -37,6 +43,14 @@ def _http_url(value: str) -> str:
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("must be an http(s) URL")
     return value.strip()
+
+
+def _email(value: str) -> str:
+    value = value.strip()
+    local, _, domain = value.partition("@")
+    if not local or "." not in domain or " " in value:
+        raise ValueError("must be an email address")
+    return value
 
 
 # --- settings ---------------------------------------------------------------------------------
@@ -64,7 +78,6 @@ class Limits(_Model):
 
 class Settings(_Model):
     timezone: str
-    recipient: str
     categories: list[str] = Field(min_length=1)
     models: Models = Models()
     limits: Limits = Limits()
@@ -78,14 +91,6 @@ class Settings(_Model):
         except ZoneInfoNotFoundError, ValueError:
             raise ValueError(f"unknown IANA timezone {value!r}, e.g. 'Europe/Berlin'") from None
         return value
-
-    @field_validator("recipient")
-    @classmethod
-    def _valid_recipient(cls, value: str) -> str:
-        local, _, domain = value.strip().partition("@")
-        if not local or "." not in domain or " " in value.strip():
-            raise ValueError("must be an email address")
-        return value.strip()
 
     @field_validator("categories")
     @classmethod
@@ -173,6 +178,7 @@ class _SourcesFile(_Model):
 class Config(_Model):
     settings: Settings
     sources: list[Source]
+    recipient: str  # from the RECIPIENT_EMAIL environment variable, never from the repo
 
     @property
     def enabled_sources(self) -> list[Source]:
@@ -183,7 +189,9 @@ def _read_yaml(path: Path) -> Any:
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise ConfigError(f"{path}: file not found") from None
+        raise ConfigError(
+            f"{path}: file not found (the config directory can be set with {CONFIG_DIR_ENV_VAR})"
+        ) from None
     except OSError as exc:
         raise ConfigError(f"{path}: cannot read file ({exc})") from None
     try:
@@ -223,16 +231,36 @@ def _validate[T: BaseModel](model: type[T], path: Path, data: dict[str, Any]) ->
         raise ConfigError("\n".join(_format_errors(path, exc, data))) from None
 
 
-def load_config(config_dir: Path | str = DEFAULT_CONFIG_DIR) -> Config:
-    """Load both config files and validate them, including cross-file rules.
+def _read_recipient(env: Mapping[str, str]) -> str:
+    value = env.get(RECIPIENT_ENV_VAR, "").strip()
+    if not value:
+        raise ConfigError(
+            f"{RECIPIENT_ENV_VAR}: environment variable is not set; it holds the address that "
+            "receives digests and alerts (a GitHub Actions secret, kept out of the repo)"
+        )
+    try:
+        return _email(value)
+    except ValueError as exc:
+        raise ConfigError(f"{RECIPIENT_ENV_VAR}: {exc}") from None
 
-    Raises `ConfigError` with all problems found in the cross-file checks, or with the problems
-    of the first file that fails structural validation.
+
+def load_config(
+    config_dir: Path | str | None = None, env: Mapping[str, str] | None = None
+) -> Config:
+    """Load both config files and the recipient, and validate them, including cross-file rules.
+
+    `config_dir` defaults to the `AGGREGATOR_CONFIG_DIR` variable, then to the `config/` directory
+    of the project, never to the current working directory. The recipient comes from the
+    `RECIPIENT_EMAIL` variable. Both variables are read from `env` (default: the process
+    environment). Raises `ConfigError` with all problems found in the cross-file checks, or with
+    the problems of the first file or variable that fails validation.
     """
-    config_dir = Path(config_dir)
+    env = os.environ if env is None else env
+    config_dir = Path(config_dir or env.get(CONFIG_DIR_ENV_VAR) or DEFAULT_CONFIG_DIR)
     settings_path = config_dir / SETTINGS_FILE
     sources_path = config_dir / SOURCES_FILE
 
+    recipient = _read_recipient(env)
     settings = _validate(Settings, settings_path, _read_yaml(settings_path))
     sources_data = _read_yaml(sources_path)
     sources = _validate(_SourcesFile, sources_path, sources_data).sources
@@ -251,4 +279,4 @@ def load_config(config_dir: Path | str = DEFAULT_CONFIG_DIR) -> Config:
     if problems:
         raise ConfigError("\n".join(problems))
 
-    return Config(settings=settings, sources=sources)
+    return Config(settings=settings, sources=sources, recipient=recipient)

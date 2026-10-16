@@ -3,8 +3,8 @@
 # IANA timezone; all schedule windows and period boundaries use it.
 timezone: Europe/Berlin
 
-# Fixed recipient of every digest and alert email.
-recipient: marcus_szymanski@epam.com
+# The recipient of every digest and alert email is not configured here. It is read from the
+# RECIPIENT_EMAIL environment variable (a GitHub Actions secret), e.g. RECIPIENT_EMAIL=you@example.com
 
 # Top-level categories. A source `topic` must start with one of these
 # ("Tech" or "Tech/AI"); the part after the first "/" is free-form.
