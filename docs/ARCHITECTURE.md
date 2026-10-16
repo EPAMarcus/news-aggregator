@@ -9,12 +9,12 @@ See `SPEC.md` for requirements and decisions.
                                      │
         ┌────────────┬───────────────┼───────────────┬──────────────┐
         │ daily.yml  │ weekly.yml    │ monthly.yml   │ (job chain)  │
-        │ 06:00      │ Sun 17:00     │ month end 20h │ yearly job   │
+        │ 06:00 UTC  │ Sun 17:00 UTC │ month end 20h │ yearly job   │
         └─────┬──────┴───────┬───────┴───────┬───────┴──────┬───────┘
               ▼              ▼               ▼              ▼
         python -m aggregator run --level <daily|weekly|monthly|yearly>
               │
-              │  1. guard: right local time? output exists? (idempotency)
+              │  1. guard: due today? output exists? (idempotency)
               │  2. collect inputs
               │       daily  : fetchers → dedupe → items
               │       others : read lower-level .md files from the repo
@@ -39,12 +39,12 @@ See `SPEC.md` for requirements and decisions.
 ```
 config/
   sources.yaml            # source list (owner-edited)
-  settings.yaml           # timezone, schedule windows, models, categories, limits, recipient
+  settings.yaml           # models, categories, limits, stale_after_days
 prompts/
   daily.md  weekly.md  monthly.md  yearly.md
 src/aggregator/
   cli.py                  # entry point: run --level --date --force
-  schedule.py             # local-time guards, period math (ISO weeks, month ends)
+  schedule.py             # run guards (month end, year end), period math (ISO weeks)
   sources/                # rss.py, web.py, newsletter.py (common Item model)
   dedupe.py               # seen-state handling
   health.py               # source health counters and flags
@@ -66,9 +66,9 @@ pyproject.toml
 ## 3. Components
 
 ### 3.1 Scheduling
-- GitHub cron runs in UTC and has no daylight-saving support. Each workflow lists the cron entries for both UTC offsets of the owner's timezone. The script then checks local time and proceeds only if it is within a 2-hour window after the target time. Combined with the idempotency check, the second trigger is a no-op.
-- GitHub may start scheduled runs 10 to 60 minutes late, which the window absorbs.
-- "Last day of month" is not expressible in cron, so `monthly.yml` triggers daily at 20:00 local and the script proceeds only if tomorrow is the 1st.
+- All schedules are in UTC, with one cron entry per workflow. GitHub cron has no daylight-saving support, so in Berlin the runs shift by an hour between summer and winter, which is accepted. The times are chosen so that the UTC date equals the Berlin date; a digest is labelled with the UTC date its run starts on.
+- GitHub may start scheduled runs 10 to 60 minutes late. No time check is needed for that; the idempotency check makes duplicate triggers harmless.
+- "Last day of month" is not expressible in cron, so `monthly.yml` triggers on days 28 to 31 at 20:00 UTC and the script proceeds only if tomorrow is the 1st (`schedule.is_due`).
 - **Yearly** is a dependent job in `monthly.yml` (`needs: monthly`) that runs only on 31.12. This guarantees the December monthly is committed first, which a separate 21:00 cron could not.
 - All workflows share one `concurrency` group so that pushes never race.
 
@@ -118,14 +118,14 @@ All of them live in GitHub Actions secrets, never in the repo. The repo is priva
 | Claude API error | Retry with backoff, then skip the digest and alert |
 | Output validation fails twice | Per 3.4 |
 | Missing lower-level digests | Skipped, per spec |
-| Duplicate or late cron trigger | Idempotency guard and time window |
+| Duplicate or late cron trigger | Idempotency guard |
 | Git push conflict | Rebase and retry; concurrency group prevents most cases |
 | Gmail credentials expired | Newsletter sources fail health check; alert |
 | Workflow disabled by GitHub | Not detected from inside; the missing daily email is the signal |
 
 ## 6. Testing
 
-- Unit tests: period math (ISO weeks, month and year boundaries, daylight-saving transitions, the 4.1 selection rule), dedupe, health thresholds, digest validation.
+- Unit tests: period math (ISO weeks, month and year boundaries, the 4.1 selection rule), dedupe, health thresholds, digest validation.
 - Fetcher tests use recorded fixtures (sample feed, sample HTML, sample email).
 - Summarizer tested with a stubbed client; one manual end-to-end run via `workflow_dispatch` with a `--dry-run` flag (no commit, no email) before enabling the schedule.
 - Walk-through scenarios as test cases: 31.12. on a Wednesday, a month ending mid-week, a month ending on Sunday, a missing weekly.

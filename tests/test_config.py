@@ -11,7 +11,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV = {"RECIPIENT_EMAIL": "owner@example.com"}
 
 SETTINGS = """
-    timezone: Europe/Berlin
     categories: [Tech, SAP & Enterprise, Other]
 """
 
@@ -33,7 +32,7 @@ def write_config(tmp_path: Path, settings: str = SETTINGS, sources: str = SOURCE
 
 def test_committed_sample_config_is_valid():
     config = load(REPO_ROOT / "config")
-    assert config.settings.timezone == "Europe/Berlin"
+    assert "Tech" in config.settings.categories
     assert config.enabled_sources
 
 
@@ -129,7 +128,7 @@ def test_web_and_newsletter_fields(tmp_path):
 @pytest.mark.parametrize(
     "settings_line",
     [
-        "timezone: Mars/Olympus",
+        "timezone: Europe/Berlin",  # schedules are in UTC, there is no timezone setting
         "categories: []",
         "categories: [Tech, Tech]",
         "categories: [Tech/AI]",
@@ -208,17 +207,17 @@ def test_committed_config_contains_no_email_address():
 def test_default_config_dir_is_the_project_config_not_the_working_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = load_config(env=ENV)
-    assert config.settings.timezone == "Europe/Berlin"
+    assert "Business & Economy" in config.settings.categories  # only in the project's config
 
 
 def test_config_dir_can_be_set_with_an_environment_variable(tmp_path, monkeypatch):
     monkeypatch.chdir(REPO_ROOT)
-    other = write_config(tmp_path, settings=SETTINGS.replace("Europe/Berlin", "Asia/Tokyo"))
+    other = write_config(tmp_path, settings=SETTINGS + "    stale_after_days: 7\n")
     config = load_config(env={**ENV, "AGGREGATOR_CONFIG_DIR": str(other)})
-    assert config.settings.timezone == "Asia/Tokyo"
+    assert config.settings.stale_after_days == 7
 
 
 def test_explicit_config_dir_wins_over_the_environment_variable(tmp_path):
     explicit = write_config(tmp_path)
     config = load_config(explicit, {**ENV, "AGGREGATOR_CONFIG_DIR": "/does/not/exist"})
-    assert config.settings.timezone == "Europe/Berlin"
+    assert config.settings.stale_after_days == 30

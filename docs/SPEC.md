@@ -60,16 +60,16 @@ A source is **failing** when a fetch errors, times out, or returns no parseable 
 
 ## 4. Schedule
 
-All times use the owner's timezone, set in `config/settings.yaml` (`Europe/Berlin`).
+All schedules are in UTC (GitHub cron has no timezone or daylight-saving support). A run may start up to an hour late, and a digest is labelled with the UTC date its run starts on. In Berlin the daily digest arrives at 07:00 or 08:00.
 
 | Level | When | Input |
 |---|---|---|
-| Daily | every day 06:00 | New items from all sources since the previous run (06:00 to 06:00 window) |
-| Weekly | Sunday 17:00 | The daily digests of the week (Monday to Sunday, by date label) |
-| Monthly | last day of month 20:00 | See 4.1 |
-| Yearly | 31.12., runs right after the December monthly (~20:00+) | The monthly digests of the year |
+| Daily | every day 06:00 UTC | New items from all sources since the previous run (06:00 to 06:00 UTC window) |
+| Weekly | Sunday 17:00 UTC | The daily digests of the week (Monday to Sunday, by date label) |
+| Monthly | last day of month 20:00 UTC | See 4.1 |
+| Yearly | 31.12., runs right after the December monthly (~20:00 UTC+) | The monthly digests of the year |
 
-A daily digest is labelled with its run date and covers the 24 hours before the run. News after 06:00 on the last day of a period therefore falls into the next period. This is accepted.
+A daily digest is labelled with its run date and covers the 24 hours before the run. News after the run on the last day of a period therefore falls into the next period. This is accepted.
 
 ### 4.1 Monthly input rule
 Monthly input = every **existing weekly digest whose Monday-to-Sunday week lies fully inside the month**, plus the **daily digests of all remaining days** of the month (edge days of partial weeks, and days of any week whose weekly digest is missing). Missing dailies are skipped.

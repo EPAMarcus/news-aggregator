@@ -8,7 +8,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -77,20 +76,10 @@ class Limits(_Model):
 
 
 class Settings(_Model):
-    timezone: str
     categories: list[str] = Field(min_length=1)
     models: Models = Models()
     limits: Limits = Limits()
     stale_after_days: int = Field(30, gt=0)
-
-    @field_validator("timezone")
-    @classmethod
-    def _valid_timezone(cls, value: str) -> str:
-        try:
-            ZoneInfo(value)
-        except ZoneInfoNotFoundError, ValueError:
-            raise ValueError(f"unknown IANA timezone {value!r}, e.g. 'Europe/Berlin'") from None
-        return value
 
     @field_validator("categories")
     @classmethod

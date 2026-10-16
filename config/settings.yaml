@@ -1,8 +1,5 @@
 # Global settings. See docs/SPEC.md sections 4 to 6.
 
-# IANA timezone; all schedule windows and period boundaries use it.
-timezone: Europe/Berlin
-
 # The recipient of every digest and alert email is not configured here. It is read from the
 # RECIPIENT_EMAIL environment variable (a GitHub Actions secret), e.g. RECIPIENT_EMAIL=you@example.com
 
