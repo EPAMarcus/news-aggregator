@@ -1,0 +1,46 @@
+name: Claude Code Review
+
+# Manual only: run it from the Actions tab (or `gh workflow run`) once a PR is ready for review.
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
+      effort:
+        description: Review effort level
+        required: true
+        type: choice
+        default: high
+        options: [low, medium, high, xhigh, max]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-review-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      # Full history of the PR head so the review can diff against the base branch
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/pull/${{ inputs.pr_number }}/head
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "/code-review ${{ inputs.effort }} --comment ${{ inputs.pr_number }}"
+          # Required for the action to start the MCP server that posts inline PR comments
+          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
