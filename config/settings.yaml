@@ -1,0 +1,34 @@
+# Global settings. See docs/SPEC.md sections 4 to 6.
+
+# IANA timezone; all schedule windows and period boundaries use it.
+timezone: Europe/Berlin
+
+# The recipient of every digest and alert email is not configured here. It is read from the
+# RECIPIENT_EMAIL environment variable (a GitHub Actions secret), e.g. RECIPIENT_EMAIL=you@example.com
+
+# Top-level categories. A source `topic` must start with one of these
+# ("Tech" or "Tech/AI"); the part after the first "/" is free-form.
+categories:
+  - Tech
+  - SAP & Enterprise
+  - Business & Economy
+  - Science & Health
+  - World & Politics
+  - Other
+
+# Claude model per digest level.
+models:
+  daily: claude-sonnet-5-5
+  weekly: claude-sonnet-5-5
+  monthly: claude-sonnet-5-5
+  yearly: claude-sonnet-5-5
+
+# Length limits: bullets for the daily digest, words for the others.
+limits:
+  daily_bullets: 10
+  weekly_words: 300
+  monthly_words: 500
+  yearly_words: 2500
+
+# A source that produced no items for this many days is flagged as stale.
+stale_after_days: 30

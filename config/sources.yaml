@@ -1,0 +1,37 @@
+# Source list. See docs/SPEC.md section 3.
+#
+# Common fields:
+#   id       unique, lowercase letters, digits, "-" and "_"
+#   name     shown in the digest's Sources section
+#   type     rss | web | newsletter
+#   topic    optional clustering hint: a category from settings.yaml ("Tech"),
+#            optionally with a free-form sub-category ("Tech/AI")
+#   enabled  optional, default true
+#
+# Type-specific fields:
+#   rss         url
+#   web         url, optional selector (CSS selector for article links)
+#   newsletter  from (sender address in the aggregator inbox)
+
+sources:
+  - id: sap-news
+    name: SAP News Center
+    type: rss
+    url: https://news.sap.com/feed/
+    topic: SAP & Enterprise
+
+  # Placeholders showing the other source types. Replace and enable them.
+  - id: some-ai-newsletter
+    name: Example AI Newsletter
+    type: newsletter
+    from: news@example.com
+    topic: Tech/AI
+    enabled: false
+
+  - id: general-news
+    name: Example News
+    type: web
+    url: https://example.com/news
+    # selector: article h2 a
+    # no topic: clustered by the LLM
+    enabled: false

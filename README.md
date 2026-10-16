@@ -28,6 +28,19 @@ uv run aggregator --version
 
 The `run --level <daily|weekly|monthly|yearly>` command is not implemented yet.
 
+## Configuration
+
+Two files in [config/](config/) control what is collected and how it is summarized:
+
+- [config/settings.yaml](config/settings.yaml): timezone, top-level categories, model per level, length limits, `stale_after_days`.
+- [config/sources.yaml](config/sources.yaml): the source list (`rss`, `web` or `newsletter`), each with an optional `topic` and `enabled` flag. The field reference is in the file's header comment.
+
+The recipient of the digest and alert emails is not in the repo. Set it in the environment as `RECIPIENT_EMAIL` (locally `export RECIPIENT_EMAIL=you@example.com`; in GitHub Actions as a repository secret). Loading the config fails when it is missing or not an email address.
+
+The config directory is the project's `config/`, whatever the working directory is. To use another one, set `AGGREGATOR_CONFIG_DIR`.
+
+A source `topic` must start with one of the configured categories (`Tech` or `Tech/AI`); the part after `/` is free-form. Loading fails with a message listing every problem for unknown categories, duplicate source IDs, missing type-specific fields and unknown keys. The sample sources are placeholders; the example newsletter and web entries are disabled.
+
 ## Development
 
 ```sh

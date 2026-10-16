@@ -1,0 +1,1 @@
+When implementing changes just open a new branch locally, adhering to the naming convention of previous branches, and implement changes inside that new branch.
