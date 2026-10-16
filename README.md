@@ -28,6 +28,15 @@ uv run aggregator --version
 
 The `run --level <daily|weekly|monthly|yearly>` command is not implemented yet.
 
+## Configuration
+
+Two files in [config/](config/) control what is collected and how it is summarized:
+
+- [config/settings.yaml](config/settings.yaml): timezone, recipient, top-level categories, model per level, length limits, `stale_after_days`.
+- [config/sources.yaml](config/sources.yaml): the source list (`rss`, `web` or `newsletter`), each with an optional `topic` and `enabled` flag. The field reference is in the file's header comment.
+
+A source `topic` must start with one of the configured categories (`Tech` or `Tech/AI`); the part after `/` is free-form. Loading fails with a message listing every problem for unknown categories, duplicate source IDs, missing type-specific fields and unknown keys. The sample sources are placeholders; the example newsletter and web entries are disabled.
+
 ## Development
 
 ```sh
