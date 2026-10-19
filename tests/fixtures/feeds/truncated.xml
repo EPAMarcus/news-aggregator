@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Truncated feed</title>
+    <item>
+      <title>Readable before the break</title>
+      <link>https://example.com/ok</link>
+      <description>This entry is complete.</description>
+    </item>
+    <item>
+      <title>Cut off &amp unescaped
