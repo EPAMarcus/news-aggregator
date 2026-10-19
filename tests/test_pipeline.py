@@ -1,0 +1,177 @@
+import io
+from dataclasses import replace
+from datetime import UTC, date, datetime
+from pathlib import Path
+
+import pytest
+
+from aggregator.config import Config, Settings, load_config
+from aggregator.pipeline import Outcome, RunRequest, Steps, run
+from aggregator.render import parse_digest
+from aggregator.schedule import LEVELS
+from aggregator.store import digest_exists, digest_path, read_digest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+NOW = datetime(2026, 12, 31, 20, 5, tzinfo=UTC)
+YEAR_END = date(2026, 12, 31)  # a Thursday: daily, monthly and yearly are due, weekly is not
+SUNDAY = date(2026, 10, 18)
+
+
+@pytest.fixture
+def config() -> Config:
+    return load_config(REPO_ROOT / "config", {"RECIPIENT_EMAIL": "owner@example.com"})
+
+
+class Recorder:
+    """Steps that record their calls, to check which side effects happen."""
+
+    def __init__(self, inputs=("a", "b")):
+        self.inputs = list(inputs)
+        self.calls: list[str] = []
+
+    def steps(self) -> Steps:
+        return Steps(
+            collect=lambda req, cfg: self._call("collect", self.inputs),
+            summarize=lambda req, cfg, inputs: self._call("summarize", f"body {req.period}\n"),
+            commit=lambda digest, path: self._call("commit"),
+            email=lambda digest, path: self._call("email"),
+        )
+
+    def _call(self, name, result=None):
+        self.calls.append(name)
+        return result
+
+
+def do_run(request, config, root, steps=None):
+    out, log = io.StringIO(), io.StringIO()
+    outcome = run(request, config, steps=steps, digests_dir=root, now=NOW, out=out, log=log)
+    return outcome, out.getvalue(), log.getvalue()
+
+
+def files(root: Path) -> list[Path]:
+    return sorted(p for p in root.rglob("*") if p.is_file())
+
+
+@pytest.mark.parametrize("level", LEVELS)
+def test_dry_run_has_no_side_effects_for_every_level(tmp_path, config, level):
+    rec = Recorder()
+    request = RunRequest(level=level, day=YEAR_END, scheduled=False, dry_run=True)
+
+    outcome, out, log = do_run(request, config, tmp_path, rec.steps())
+
+    assert outcome is Outcome.DRY_RUN
+    assert files(tmp_path) == []
+    assert rec.calls == ["collect", "summarize"]  # no commit, no email
+    assert "dry run: would write" in log
+    digest = parse_digest(out)
+    assert (digest.meta.level, digest.meta.period) == (level, request.period)
+    assert digest.meta.model == getattr(config.settings.models, level)
+    assert digest.meta.generated_at == NOW
+
+
+@pytest.mark.parametrize("level", LEVELS)
+def test_dry_run_with_the_default_stub_steps(tmp_path, config, level):
+    request = RunRequest(level=level, day=YEAR_END, scheduled=False, dry_run=True)
+    outcome, out, _ = do_run(request, config, tmp_path)
+    assert outcome is Outcome.DRY_RUN
+    assert files(tmp_path) == []
+    body = parse_digest(out).body
+    assert all(f"## {c}" in body for c in config.settings.categories)
+
+
+@pytest.mark.parametrize("level", LEVELS)
+def test_second_run_for_the_same_period_changes_nothing(tmp_path, config, level):
+    request = RunRequest(level=level, day=YEAR_END, scheduled=False)
+    first = Recorder()
+    assert do_run(request, config, tmp_path, first.steps())[0] is Outcome.WRITTEN
+    assert first.calls == ["collect", "summarize", "commit", "email"]
+    path = digest_path(level, request.period, tmp_path)
+    before = path.read_bytes()
+
+    second = Recorder()
+    outcome, _, log = do_run(request, config, tmp_path, second.steps())
+
+    assert outcome is Outcome.EXISTS
+    assert "already exists" in log
+    assert second.calls == []
+    assert path.read_bytes() == before
+    assert files(tmp_path) == [path]
+
+
+def test_another_day_of_the_same_period_is_also_a_duplicate(tmp_path, config):
+    run_on = lambda day: do_run(RunRequest("weekly", day, scheduled=False), config, tmp_path)[0]  # noqa: E731
+    assert run_on(date(2026, 10, 12)) is Outcome.WRITTEN  # Monday of 2026-W42
+    assert run_on(SUNDAY) is Outcome.EXISTS
+
+
+def test_force_replaces_an_existing_digest(tmp_path, config):
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+    do_run(request, config, tmp_path, Recorder(inputs=["old"]).steps())
+
+    rec = Recorder(inputs=["new"])
+    outcome, _, _ = do_run(replace(request, force=True), config, tmp_path, rec.steps())
+
+    assert outcome is Outcome.WRITTEN
+    assert rec.calls == ["collect", "summarize", "commit", "email"]
+    assert read_digest("daily", "2026-12-31", tmp_path).meta.inputs == ["new"]
+
+
+def test_dry_run_with_force_still_writes_nothing(tmp_path, config):
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+    do_run(request, config, tmp_path)
+    before = files(tmp_path)[0].read_bytes()
+
+    outcome, _, _ = do_run(replace(request, force=True, dry_run=True), config, tmp_path)
+
+    assert outcome is Outcome.DRY_RUN
+    assert files(tmp_path)[0].read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("level", "day", "due"),
+    [
+        ("daily", date(2026, 10, 14), True),
+        ("weekly", date(2026, 10, 14), False),
+        ("weekly", SUNDAY, True),
+        ("monthly", date(2026, 10, 30), False),
+        ("monthly", date(2026, 10, 31), True),
+        ("yearly", date(2026, 11, 30), False),
+        ("yearly", YEAR_END, True),
+    ],
+)
+def test_scheduled_runs_only_produce_due_digests(tmp_path, config, level, day, due):
+    rec = Recorder()
+    outcome, _, log = do_run(RunRequest(level=level, day=day), config, tmp_path, rec.steps())
+    if due:
+        assert outcome is Outcome.WRITTEN
+    else:
+        assert outcome is Outcome.NOT_DUE
+        assert "not due" in log
+        assert rec.calls == []
+        assert files(tmp_path) == []
+
+
+def test_manual_runs_skip_the_due_check(tmp_path, config):
+    request = RunRequest(level="weekly", day=date(2026, 10, 14), scheduled=False)
+    assert do_run(request, config, tmp_path)[0] is Outcome.WRITTEN
+    assert digest_exists("weekly", "2026-W42", tmp_path)
+
+
+def test_no_inputs_skips_the_digest(tmp_path, config):
+    rec = Recorder(inputs=[])
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+    outcome, _, log = do_run(request, config, tmp_path, rec.steps())
+    assert outcome is Outcome.NO_INPUTS
+    assert "no inputs" in log
+    assert rec.calls == ["collect"]
+    assert files(tmp_path) == []
+
+
+def test_written_digest_records_inputs_and_model(tmp_path):
+    settings = Settings(categories=["Tech"], models={"monthly": "claude-test"})
+    config = Config(settings=settings, sources=[], recipient="owner@example.com")
+    request = RunRequest(level="monthly", day=YEAR_END, scheduled=False)
+    do_run(request, config, tmp_path, Recorder(inputs=["2026-W50", "2026-12-14"]).steps())
+    meta = read_digest("monthly", "2026-12", tmp_path).meta
+    assert meta.inputs == ["2026-W50", "2026-12-14"]
+    assert meta.model == "claude-test"
