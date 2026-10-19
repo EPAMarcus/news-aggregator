@@ -9,6 +9,7 @@ from aggregator.schedule import (
     is_year_end,
     month_bounds,
     period_label,
+    period_start,
     week_bounds,
 )
 
@@ -158,3 +159,38 @@ def test_week_bounds(day, monday, sunday):
 )
 def test_month_bounds(day, first, last):
     assert month_bounds(day) == (first, last)
+
+
+@pytest.mark.parametrize(
+    ("level", "label", "start"),
+    [
+        ("daily", "2026-10-15", date(2026, 10, 15)),
+        ("weekly", "2026-W01", date(2025, 12, 29)),
+        ("weekly", "2026-W53", date(2026, 12, 28)),
+        ("monthly", "2026-10", date(2026, 10, 1)),
+        ("yearly", "2026", date(2026, 1, 1)),
+    ],
+)
+def test_period_start(level, label, start):
+    assert period_start(level, label) == start
+    assert period_label(level, start) == label
+
+
+@pytest.mark.parametrize(
+    ("level", "label"),
+    [
+        ("daily", "2026-02-30"),
+        ("daily", "2026-10-15x"),
+        ("daily", "2026-W42"),
+        ("weekly", "2025-W53"),  # 2025 has 52 ISO weeks
+        ("weekly", "2026-W00"),
+        ("monthly", "2026-13"),
+        ("monthly", "2026-1"),
+        ("yearly", "0000"),
+        ("yearly", "../2026"),
+        ("hourly", "2026"),
+    ],
+)
+def test_period_start_rejects_invalid_labels(level, label):
+    with pytest.raises(ValueError):
+        period_start(level, label)

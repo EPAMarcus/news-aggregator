@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV = {"RECIPIENT_EMAIL": "owner@example.com"}
 
 SETTINGS = """
-    categories: [Tech, SAP & Enterprise, Other]
+    categories: [Tech, SAP, Other]
 """
 
 SOURCES = """
@@ -33,6 +33,7 @@ def write_config(tmp_path: Path, settings: str = SETTINGS, sources: str = SOURCE
 def test_committed_sample_config_is_valid():
     config = load(REPO_ROOT / "config")
     assert "Tech" in config.settings.categories
+    assert all(len(c.split()) == 1 for c in config.settings.categories)
     assert config.enabled_sources
 
 
@@ -54,18 +55,18 @@ def test_unknown_top_level_topic_fails_with_clear_error(tmp_path):
     message = str(exc.value)
     assert "'a'" in message
     assert "'Sports'" in message
-    assert "Tech, SAP & Enterprise, Other" in message
+    assert "Tech, SAP, Other" in message
 
 
 def test_sub_categories_are_free_form(tmp_path):
     sources = """
         sources:
           - {id: a, name: A, type: rss, url: "https://example.com/f", topic: Tech/Any Thing/Deep}
-          - {id: b, name: B, type: rss, url: "https://example.com/g", topic: SAP & Enterprise}
+          - {id: b, name: B, type: rss, url: "https://example.com/g", topic: SAP/S 4 HANA}
           - {id: c, name: C, type: rss, url: "https://example.com/h"}
     """
     config = load(write_config(tmp_path, sources=sources))
-    assert [s.category for s in config.sources] == ["Tech", "SAP & Enterprise", None]
+    assert [s.category for s in config.sources] == ["Tech", "SAP", None]
 
 
 def test_disabled_sources_are_still_validated(tmp_path):
@@ -132,6 +133,7 @@ def test_web_and_newsletter_fields(tmp_path):
         "categories: []",
         "categories: [Tech, Tech]",
         "categories: [Tech/AI]",
+        "categories: [Tech, Business & Economy]",  # top-level categories are one word
         "stale_after_days: 0",
         "limits: {daily_bullets: -1}",
         "unexpected_key: 1",
@@ -207,7 +209,7 @@ def test_committed_config_contains_no_email_address():
 def test_default_config_dir_is_the_project_config_not_the_working_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = load_config(env=ENV)
-    assert "Business & Economy" in config.settings.categories  # only in the project's config
+    assert "Business" in config.settings.categories  # only in the project's config
 
 
 def test_config_dir_can_be_set_with_an_environment_variable(tmp_path, monkeypatch):

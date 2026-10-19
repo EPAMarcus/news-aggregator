@@ -8,6 +8,7 @@ change it.
 
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 from typing import Literal, get_args
 
@@ -74,3 +75,37 @@ def period_label(level: Level, day: date) -> str:
             return f"{day.year}-{day.month:02d}"
         case "yearly":
             return f"{day.year}"
+
+
+_LABEL_PATTERNS: dict[Level, re.Pattern[str]] = {
+    "daily": re.compile(r"(\d{4})-(\d{2})-(\d{2})"),
+    "weekly": re.compile(r"(\d{4})-W(\d{2})"),
+    "monthly": re.compile(r"(\d{4})-(\d{2})"),
+    "yearly": re.compile(r"(\d{4})"),
+}
+
+
+def period_start(level: Level, label: str) -> date:
+    """First day of the period named by `label`, the inverse of `period_label`.
+
+    Raises `ValueError` if `label` is not a well-formed, existing period of `level` (for example
+    `2026-02-30`, `2026-W54` or `2026-13`), so a label can safely be used in a file path.
+    """
+    if level not in _LABEL_PATTERNS:
+        raise ValueError(f"unknown level {level!r}")
+    match = _LABEL_PATTERNS[level].fullmatch(label)
+    if match is None:
+        raise ValueError(f"{label!r} is not a {level} period label")
+    parts = [int(p) for p in match.groups()]
+    try:
+        match level:
+            case "daily":
+                return date(*parts)
+            case "weekly":
+                return date.fromisocalendar(parts[0], parts[1], 1)
+            case "monthly":
+                return date(parts[0], parts[1], 1)
+            case "yearly":
+                return date(parts[0], 1, 1)
+    except ValueError:
+        raise ValueError(f"{label!r} is not an existing {level} period") from None

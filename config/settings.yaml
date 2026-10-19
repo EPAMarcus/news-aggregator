@@ -3,14 +3,16 @@
 # The recipient of every digest and alert email is not configured here. It is read from the
 # RECIPIENT_EMAIL environment variable (a GitHub Actions secret), e.g. RECIPIENT_EMAIL=you@example.com
 
-# Top-level categories. A source `topic` must start with one of these
+# Top-level categories, one word each. A source `topic` must start with one of these
 # ("Tech" or "Tech/AI"); the part after the first "/" is free-form.
 categories:
   - Tech
-  - SAP & Enterprise
-  - Business & Economy
-  - Science & Health
-  - World & Politics
+  - SAP
+  - Business
+  - Science
+  - Politics
+  - Philosophy
+  - Health
   - Other
 
 # Claude model per digest level.

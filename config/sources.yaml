@@ -18,20 +18,44 @@ sources:
     name: SAP News Center
     type: rss
     url: https://news.sap.com/feed/
-    topic: SAP & Enterprise
+    topic: SAP
 
-  # Placeholders showing the other source types. Replace and enable them.
-  - id: some-ai-newsletter
-    name: Example AI Newsletter
-    type: newsletter
-    from: news@example.com
-    topic: Tech/AI
-    enabled: false
+  - id: martin-fowler
+    name: Martin Fowlers Blog
+    type: rss
+    url: https://martinfowler.com/feed.atom
+    topic: Tech
 
-  - id: general-news
-    name: Example News
-    type: web
-    url: https://example.com/news
-    # selector: article h2 a
-    # no topic: clustered by the LLM
-    enabled: false
+  - id: hacker-news
+    name: Hacker News RSS
+    type: rss
+    url: https://news.ycombinator.com/rss
+    topic: Tech
+
+  - id: new-stack
+    name: News Stack RSS
+    type: rss
+    url:  https://thenewstack.io/feed/
+    topic: Tech
+
+  - id: the-verge
+    name: The Verge RSS
+    type: rss
+    url:  https://www.theverge.com/rss/index.xml
+    topic: Tech
+
+# Placeholders showing the other source types. Replace and enable them.
+  # - id: some-ai-newsletter
+  #   name: Example AI Newsletter
+  #   type: newsletter
+  #   from: news@example.com
+  #   topic: Tech/AI
+  #   enabled: false
+
+  # - id: general-news
+  #   name: Example News
+  #   type: web
+  #   url: https://example.com/news
+  #   # selector: article h2 a
+  #   # no topic: clustered by the LLM
+  #   enabled: false
