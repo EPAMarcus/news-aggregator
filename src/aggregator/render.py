@@ -16,10 +16,25 @@ A digest file looks like this (spec section 6):
     - ...
 
 Markdown to HTML email rendering will also live here (see ARCHITECTURE.md).
+
+The Sources section at the bottom of a daily digest is rendered here by code, never by the LLM
+(architecture 3.4), from the sources that actually contributed items to the digest:
+
+    ## Sources
+    - Hacker News
+    - SAP News Center
+
+    ### Warnings
+    - The Verge: failed 3 runs in a row. Fix or remove the source.
+
+The Warnings sub-section is the slot for source health warnings (#25) and is left out when there
+are none.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Self
 
 import yaml
@@ -33,9 +48,13 @@ from pydantic import (
     model_validator,
 )
 
+from aggregator.config import Source
 from aggregator.schedule import Level, period_start
+from aggregator.sources import FetchResult
 
 DELIMITER = "---"
+SOURCES_HEADING = "## Sources"
+WARNINGS_HEADING = "### Warnings"
 
 
 class DigestFormatError(ValueError):
@@ -110,3 +129,55 @@ def parse_digest(text: str) -> Digest:
         )
         raise DigestFormatError(f"invalid front matter: {problems}") from None
     return Digest(meta=meta, body=body)
+
+
+# --- daily Sources section --------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SourceWarning:
+    """A health warning for one source, e.g. failing or stale (#25)."""
+
+    source_name: str
+    message: str
+
+
+def contributing_sources(sources: Iterable[Source], results: Iterable[FetchResult]) -> list[Source]:
+    """The sources that contributed at least one item to the digest, in config order.
+
+    `results` are the fetch results after dedupe (`dedupe.select_new`), so a source whose items
+    were all seen before ("no new items") or that failed has no items and is not listed. Results
+    for ids that are not in `sources` are ignored.
+    """
+    with_items = {result.source_id for result in results if result.items}
+    return [source for source in sources if source.id in with_items]
+
+
+def _one_line(text: str) -> str:
+    # Names come from sources.yaml; a quoted YAML string could contain a line break.
+    return " ".join(text.split())
+
+
+def render_sources_section(
+    sources: Sequence[Source], warnings: Sequence[SourceWarning] = ()
+) -> str:
+    """The Markdown Sources section: source names only, then the health warnings if any.
+    Empty when there is nothing to list."""
+    if not sources and not warnings:
+        return ""
+    lines = [SOURCES_HEADING]
+    lines += [f"- {_one_line(source.name)}" for source in sources]
+    if warnings:
+        if sources:
+            lines.append("")
+        lines.append(WARNINGS_HEADING)
+        lines += [f"- {_one_line(w.source_name)}: {_one_line(w.message)}" for w in warnings]
+    return "\n".join(lines) + "\n"
+
+
+def with_sources_section(body: str, section: str) -> str:
+    """The daily body with the Sources section appended at the bottom."""
+    body = body.rstrip()
+    if not section:
+        return body + "\n" if body else ""
+    return f"{body}\n\n{section}" if body else section
