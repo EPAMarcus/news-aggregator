@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Blog</title>
+  <id>urn:uuid:60a76c80-d399-11d9-b93C-0003939e0af6</id>
+  <updated>2026-10-15T10:00:00Z</updated>
+  <link href="https://blog.example.com/"/>
+  <entry>
+    <title>Atom with full content</title>
+    <id>tag:blog.example.com,2026:post-1</id>
+    <link rel="alternate" href="https://blog.example.com/post-1"/>
+    <published>2026-10-15T09:00:00Z</published>
+    <updated>2026-10-15T10:00:00Z</updated>
+    <summary>Summary only.</summary>
+    <content type="html">&lt;p&gt;The full &lt;em&gt;Atom&lt;/em&gt; content.&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title type="text">Atom with updated date only</title>
+    <id>tag:blog.example.com,2026:post-2</id>
+    <link href="https://blog.example.com/post-2"/>
+    <updated>2026-10-14T18:15:00+02:00</updated>
+    <summary type="text">Plain text   summary
+      over two lines.</summary>
+  </entry>
+</feed>
