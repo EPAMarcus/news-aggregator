@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from aggregator.config import Config, Settings, load_config
-from aggregator.pipeline import Outcome, RunRequest, Steps, run
+from aggregator.pipeline import Body, Collected, Outcome, RunRequest, StepFailed, Steps, run
 from aggregator.render import parse_digest
 from aggregator.schedule import LEVELS
 from aggregator.store import digest_exists, digest_path, read_digest
@@ -25,14 +25,24 @@ def config() -> Config:
 class Recorder:
     """Steps that record their calls, to check which side effects happen."""
 
-    def __init__(self, inputs=("a", "b")):
+    def __init__(self, inputs=("a", "b"), problems=()):
         self.inputs = list(inputs)
+        self.problems = list(problems)
         self.calls: list[str] = []
 
     def steps(self) -> Steps:
         return Steps(
-            collect=lambda req, cfg: self._call("collect", self.inputs),
-            summarize=lambda req, cfg, inputs: self._call("summarize", f"body {req.period}\n"),
+            collect=lambda req, cfg: self._call("collect", Collected(self.inputs, data="data")),
+            summarize=lambda req, cfg, collected: self._call(
+                "summarize",
+                Body(
+                    f"body {req.period}\n",
+                    getattr(cfg.settings.models, req.level),
+                    notes=["a note"],
+                    problems=self.problems,
+                ),
+            ),
+            record=lambda req, collected: self._call("record"),
             commit=lambda digest, path: self._call("commit"),
             email=lambda digest, path: self._call("email"),
         )
@@ -61,7 +71,7 @@ def test_dry_run_has_no_side_effects_for_every_level(tmp_path, config, level):
 
     assert outcome is Outcome.DRY_RUN
     assert files(tmp_path) == []
-    assert rec.calls == ["collect", "summarize"]  # no commit, no email
+    assert rec.calls == ["collect", "summarize"]  # no record, commit or email
     assert "dry run: would write" in log
     digest = parse_digest(out)
     assert (digest.meta.level, digest.meta.period) == (level, request.period)
@@ -84,7 +94,7 @@ def test_second_run_for_the_same_period_changes_nothing(tmp_path, config, level)
     request = RunRequest(level=level, day=YEAR_END, scheduled=False)
     first = Recorder()
     assert do_run(request, config, tmp_path, first.steps())[0] is Outcome.WRITTEN
-    assert first.calls == ["collect", "summarize", "commit", "email"]
+    assert first.calls == ["collect", "summarize", "record", "commit", "email"]
     path = digest_path(level, request.period, tmp_path)
     before = path.read_bytes()
 
@@ -112,7 +122,7 @@ def test_force_replaces_an_existing_digest(tmp_path, config):
     outcome, _, _ = do_run(replace(request, force=True), config, tmp_path, rec.steps())
 
     assert outcome is Outcome.WRITTEN
-    assert rec.calls == ["collect", "summarize", "commit", "email"]
+    assert rec.calls == ["collect", "summarize", "record", "commit", "email"]
     assert read_digest("daily", "2026-12-31", tmp_path).meta.inputs == ["new"]
 
 
@@ -175,3 +185,64 @@ def test_written_digest_records_inputs_and_model(tmp_path):
     meta = read_digest("monthly", "2026-12", tmp_path).meta
     assert meta.inputs == ["2026-W50", "2026-12-14"]
     assert meta.model == "claude-test"
+
+
+def test_a_failed_step_skips_the_digest(tmp_path, config):
+    def fail(req, cfg, collected):
+        raise StepFailed("Claude API error after 4 attempts")
+
+    rec = Recorder()
+    steps = replace(rec.steps(), summarize=fail)
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+
+    outcome, _, log = do_run(request, config, tmp_path, steps)
+
+    assert outcome is Outcome.FAILED and outcome.is_error
+    assert "error: daily digest 2026-12-31 failed, skipped: Claude API error" in log
+    assert rec.calls == ["collect"]  # nothing recorded, committed or sent
+    assert files(tmp_path) == []
+
+
+def test_a_failing_collect_is_also_a_failed_run(tmp_path, config):
+    def fail(req, cfg):
+        raise StepFailed("seen.json is broken")
+
+    steps = replace(Recorder().steps(), collect=fail)
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+    assert do_run(request, config, tmp_path, steps)[0] is Outcome.FAILED
+
+
+@pytest.mark.parametrize(
+    ("outcome", "error"),
+    [
+        (Outcome.WRITTEN, False),
+        (Outcome.DRY_RUN, False),
+        (Outcome.NOT_DUE, False),
+        (Outcome.EXISTS, False),
+        (Outcome.NO_INPUTS, True),
+        (Outcome.FAILED, True),
+    ],
+)
+def test_error_outcomes(outcome, error):
+    assert outcome.is_error is error
+
+
+def test_notes_and_problems_are_logged(tmp_path, config):
+    rec = Recorder(problems=["truncated to 10 bullets"])
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+    outcome, _, log = do_run(request, config, tmp_path, rec.steps())
+    assert outcome is Outcome.WRITTEN  # problems are flagged, not fatal
+    assert "a note" in log
+    assert "warning: truncated to 10 bullets" in log
+
+
+def test_record_runs_after_the_write(tmp_path, config):
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+    seen = []
+
+    def record(req, collected):
+        seen.append((digest_exists("daily", req.period, tmp_path), collected.data))
+
+    steps = replace(Recorder().steps(), record=record)
+    do_run(request, config, tmp_path, steps)
+    assert seen == [(True, "data")]

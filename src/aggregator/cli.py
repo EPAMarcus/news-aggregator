@@ -1,16 +1,22 @@
-"""Command line: `aggregator run --level <level> [--date YYYY-MM-DD] [--force] [--dry-run]`."""
+"""Command line: `aggregator run --level <level> [--date YYYY-MM-DD] [--force] [--dry-run]`.
+
+Exit codes: 0 when the digest was written, printed (dry run), not due or already there; 1 for a
+configuration error or a due digest that could not be produced (no inputs, failed step), so that
+the workflow can alert (#16); 2 for bad arguments.
+"""
 
 from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 from aggregator import __version__
-from aggregator.config import ConfigError, load_config
-from aggregator.pipeline import RunRequest, run
+from aggregator.config import Config, ConfigError, load_config
+from aggregator.daily import DailySteps
+from aggregator.pipeline import RunRequest, Steps, run
 from aggregator.schedule import LEVELS
 from aggregator.store import DEFAULT_DIGESTS_DIR
 
@@ -60,11 +66,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def default_steps(request: RunRequest, config: Config) -> Steps:
+    """The real steps where they exist (daily), the stubs for the other levels."""
+    if request.level == "daily":
+        return DailySteps(config).steps()
+    return Steps()
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
     today: date | None = None,
     digests_dir: Path = DEFAULT_DIGESTS_DIR,
+    make_steps: Callable[[RunRequest, Config], Steps] = default_steps,
 ) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -88,5 +102,5 @@ def main(
     except ConfigError as exc:
         print(f"configuration error:\n{exc}", file=sys.stderr)
         return EXIT_ERROR
-    run(request, config, digests_dir=digests_dir)
-    return EXIT_OK
+    outcome = run(request, config, steps=make_steps(request, config), digests_dir=digests_dir)
+    return EXIT_ERROR if outcome.is_error else EXIT_OK

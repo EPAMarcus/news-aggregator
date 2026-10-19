@@ -15,17 +15,28 @@ instead of failing the digest over a formatting slip. An API failure raises Summ
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import sys
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from string import Template
+from typing import TextIO
 
-from aggregator.config import PROJECT_ROOT, Settings
-from aggregator.sources import Item
-from aggregator.summarize import Document, Revision, Summarizer, Summary
+from aggregator.config import PROJECT_ROOT, Config, Settings, Source
+from aggregator.dedupe import DEFAULT_STATE_PATH, SeenState, StateError, select_new
+from aggregator.pipeline import Body, Collected, RunRequest, StepFailed, Steps
+from aggregator.render import contributing_sources, render_sources_section, with_sources_section
+from aggregator.sources import FetchResult, Item, fetch_all
+from aggregator.sources.base import Fetcher
+from aggregator.summarize import Document, Revision, Summarizer, SummarizerError, Summary
 from aggregator.validate import check_daily, count_bullets, truncate_bullets
 
 DEFAULT_PROMPTS_DIR = PROJECT_ROOT / "prompts"
+
+# Source types the daily run fetches. Newsletter (#12) and web (#13) sources are skipped until
+# their fetchers exist; add the type here when it does.
+DAILY_SOURCE_TYPES = frozenset({"rss"})
 
 
 class PromptError(Exception):
@@ -108,3 +119,135 @@ def summarize_daily(
         input_tokens=sum(a.input_tokens for a in answers),
         output_tokens=sum(a.output_tokens for a in answers),
     )
+
+
+# --- the daily run steps (pipeline.Steps) ------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DailyInputs:
+    """What collect hands to summarize and record."""
+
+    sources: list[Source]  # the sources that were fetched
+    fetched: list[FetchResult]  # every fetch result, for refreshing the seen-state
+    fresh: list[FetchResult]  # the same results with only the new items
+    state: SeenState
+    now: datetime
+
+    @property
+    def items(self) -> list[Item]:
+        return [item for result in self.fresh for item in result.items]
+
+
+class DailySteps:
+    """The real collect, summarize and record steps of the daily level:
+
+        collect    fetch the enabled RSS sources, keep the new items (dedupe, 48h window)
+        summarize  Claude with the daily prompt, validation and one retry, then the Sources section
+        record     mark the included items as seen; only after the digest was written, never in a
+                   dry run (the pipeline does not call it then)
+
+    Everything external can be replaced for tests: the fetchers, the summarizer, the state file
+    and the clock.
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        *,
+        summarizer: Summarizer | None = None,
+        fetchers: Mapping[str, Fetcher] | None = None,
+        state_path: Path = DEFAULT_STATE_PATH,
+        prompts_dir: Path | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        log: TextIO | None = None,
+    ) -> None:
+        self.config = config
+        self.summarizer = summarizer or Summarizer(config.settings)
+        self.fetchers = fetchers
+        self.state_path = state_path
+        self.prompts_dir = prompts_dir
+        self.clock = clock
+        self.log = log or sys.stderr
+
+    def steps(self, base: Steps | None = None) -> Steps:
+        """`base` with collect, summarize and record replaced (commit and email are kept)."""
+        base = base or Steps()
+        return Steps(
+            collect=self.collect,
+            summarize=self.summarize,
+            record=self.record,
+            commit=base.commit,
+            email=base.email,
+        )
+
+    def _say(self, message: str) -> None:
+        print(message, file=self.log)
+
+    # --- collect -------------------------------------------------------------------------------
+
+    def collect(self, request: RunRequest, config: Config) -> Collected:
+        # The 48h window is relative to the time of the run, not to --date: feeds only hold
+        # recent items, so a backfill of an old day cannot reconstruct that day anyway.
+        now = self.clock()
+        try:
+            state = SeenState.load(self.state_path)
+        except StateError as exc:
+            raise StepFailed(str(exc)) from None
+
+        sources = [s for s in config.enabled_sources if s.type in DAILY_SOURCE_TYPES]
+        skipped = [s.id for s in config.enabled_sources if s.type not in DAILY_SOURCE_TYPES]
+        if skipped:
+            self._say(f"skipped sources without a fetcher yet: {', '.join(skipped)}")
+
+        fetched = fetch_all(sources, self.fetchers)
+        fresh = select_new(fetched, state, now)
+        for result in fetched:
+            if not result.ok:
+                self._say(f"warning: source {result.source_id} failed: {result.error}")
+        for result in fresh:
+            if result.ok:
+                self._say(f"source {result.source_id}: {len(result.items)} new items")
+
+        inputs = DailyInputs(sources, fetched, fresh, state, now)
+        contributors = contributing_sources(sources, fresh)
+        return Collected(inputs=[s.id for s in contributors], data=inputs)
+
+    # --- summarize -----------------------------------------------------------------------------
+
+    def summarize(self, request: RunRequest, config: Config, collected: Collected) -> Body:
+        inputs: DailyInputs = collected.data
+        try:
+            daily = summarize_daily(
+                inputs.items, config.settings, self.summarizer, self.prompts_dir
+            )
+        except (SummarizerError, PromptError) as exc:
+            raise StepFailed(str(exc)) from exc
+
+        section = render_sources_section(contributing_sources(inputs.sources, inputs.fresh))
+        notes = [
+            f"claude: {daily.model}, {daily.attempts} answer(s), "
+            f"{daily.input_tokens} input / {daily.output_tokens} output tokens"
+        ]
+        notes += [f"retried for: {p}" for p in daily.retried_for]
+        problems = list(daily.problems)
+        if daily.truncated_from is not None:
+            problems.insert(
+                0,
+                f"digest still had {daily.truncated_from} bullets after the retry, truncated to "
+                f"{config.settings.limits.daily_bullets}",
+            )
+        return Body(
+            text=with_sources_section(daily.text, section),
+            model=daily.model,
+            notes=notes,
+            problems=problems,
+        )
+
+    # --- record --------------------------------------------------------------------------------
+
+    def record(self, request: RunRequest, collected: Collected) -> None:
+        inputs: DailyInputs = collected.data
+        inputs.state.record(inputs.fetched, inputs.fresh, inputs.now)
+        path = inputs.state.save(self.state_path)
+        self._say(f"updated {path}")

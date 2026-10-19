@@ -5,7 +5,9 @@ from datetime import date
 import pytest
 
 from aggregator import __version__
-from aggregator.cli import main
+from aggregator.cli import default_steps, main
+from aggregator.daily import DailySteps
+from aggregator.pipeline import Collected, StepFailed, Steps, stub_collect
 
 
 def test_help_exits_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
@@ -41,8 +43,13 @@ def env(monkeypatch):
     monkeypatch.delenv("AGGREGATOR_CONFIG_DIR", raising=False)
 
 
-def cli(args, root, today=TODAY):
-    return main(["run", *args], today=today, digests_dir=root)
+def stub_steps(request, config):
+    """The pipeline's stub steps for every level: no network, no Claude."""
+    return Steps()
+
+
+def cli(args, root, today=TODAY, make_steps=stub_steps):
+    return main(["run", *args], today=today, digests_dir=root, make_steps=make_steps)
 
 
 def test_run_dry_run_prints_the_digest_and_writes_nothing(tmp_path, env, capsys):
@@ -103,3 +110,35 @@ def test_run_reports_config_errors(tmp_path, monkeypatch, capsys):
     assert cli(["--level", "daily"], tmp_path) == 1
     assert "RECIPIENT_EMAIL" in capsys.readouterr().err
     assert list(tmp_path.iterdir()) == []
+
+
+def test_run_without_inputs_exits_with_an_error(tmp_path, env, capsys):
+    def no_inputs(request, config):
+        return Steps(collect=lambda req, cfg: Collected([]))
+
+    assert cli(["--level", "daily"], tmp_path, make_steps=no_inputs) == 1
+    assert "no inputs" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_run_with_a_failed_step_exits_with_an_error(tmp_path, env, capsys):
+    def failing(request, config):
+        def summarize(req, cfg, collected):
+            raise StepFailed("ANTHROPIC_API_KEY is not set")
+
+        return Steps(collect=stub_collect, summarize=summarize)
+
+    assert cli(["--level", "daily"], tmp_path, make_steps=failing) == 1
+    assert "ANTHROPIC_API_KEY is not set" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_default_steps_are_real_for_daily_only(env):
+    from aggregator.config import load_config
+    from aggregator.pipeline import RunRequest
+
+    config = load_config()
+    daily = default_steps(RunRequest("daily", TODAY), config)
+    assert isinstance(daily.collect.__self__, DailySteps)
+    for level in ("weekly", "monthly", "yearly"):
+        assert default_steps(RunRequest(level, TODAY), config) == Steps()
