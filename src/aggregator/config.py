@@ -89,6 +89,9 @@ class Settings(_Model):
             if "/" in value:
                 # '/' separates a topic's category from its sub-category
                 raise ValueError(f"category {value!r} must not contain '/'")
+            if len(value.split()) > 1:
+                # top-level names are kept short; detail belongs in sub-categories (Tech/AI)
+                raise ValueError(f"category {value!r} must be a single word")
         duplicates = sorted(v for v, n in Counter(values).items() if n > 1)
         if duplicates:
             raise ValueError(f"duplicate categories: {', '.join(duplicates)}")

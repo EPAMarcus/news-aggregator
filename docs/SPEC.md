@@ -32,7 +32,7 @@ Each entry has: `id`, `name` (shown in the digest), `type`, type-specific fields
 ### Topic tags
 - `topic` is an optional string in `sources.yaml`, either a top-level category (`Tech`) or a category path (`Tech/AI`).
 - The tag is passed to the LLM together with each item as a **strong hint** for clustering. The LLM may still place an item elsewhere when its content clearly belongs to another topic (a general news site that covers many topics).
-- The top-level part must be one of the categories in `settings.yaml` (see 5); a source with an unknown top-level category makes config validation fail with a clear error. Sub-categories are free-form.
+- The top-level part must be one of the categories in `settings.yaml` (see 5), each a single word; a source with an unknown top-level category makes config validation fail with a clear error. Sub-categories are free-form.
 - Untagged sources are clustered by the LLM alone.
 
 Example:
@@ -42,7 +42,7 @@ sources:
     name: SAP News Center
     type: rss
     url: https://news.sap.com/feed/
-    topic: SAP & Enterprise
+    topic: SAP
   - id: some-ai-newsletter
     name: Example AI Newsletter
     type: newsletter
@@ -81,8 +81,8 @@ All existing monthly digests of the year. A missing month is skipped.
 
 Common rules: English; clustered by topic with `##` sections and optional `###` sub-sections when a topic has enough items (for example Tech → AI); concise and high level, no per-article detail. Source `topic` tags (see 3) steer the clustering. Weekly, monthly and yearly digests keep the same top-level sections.
 
-Suggested top-level categories (adjustable in `settings.yaml`; the LLM may add sub-sections but keeps top-level names stable):
-Tech (AI, Cloud & Dev), SAP & Enterprise, Business & Economy, Science & Health, World & Politics, Other.
+Suggested top-level categories, one word each (adjustable in `settings.yaml`; the LLM may add sub-sections but keeps top-level names stable):
+Tech (AI, Cloud & Dev), SAP, Business, Science, World, Other.
 
 | Level | Length limit | Sources section |
 |---|---|---|
