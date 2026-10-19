@@ -15,7 +15,9 @@ categories:
   - Health
   - Other
 
-# Claude model per digest level.
+# Claude model per digest level. claude-sonnet-5-5 verified as a current Claude API model ID on
+# 2026-10-19 (https://platform.claude.com/docs/en/models/overview; retirement not before
+# 2027-09-28). Re-check this page before changing a model.
 models:
   daily: claude-sonnet-5-5
   weekly: claude-sonnet-5-5
