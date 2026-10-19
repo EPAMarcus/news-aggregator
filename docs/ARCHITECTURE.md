@@ -48,7 +48,9 @@ src/aggregator/
   sources/                # rss.py, web.py, newsletter.py (common Item model)
   dedupe.py               # seen-state handling
   health.py               # source health counters and flags
-  summarize.py            # Claude calls, output validation
+  summarize.py            # Claude calls (delimited untrusted data, backoff, revision turn)
+  validate.py             # output validation (daily structure and bullet limit, truncation)
+  daily.py                # daily prompt, validation, one retry
   rollup.py               # input selection for weekly/monthly/yearly (rule 4.1, 4.2)
   render.py               # front matter, Markdown to HTML email
   mailer.py               # SMTP send, alert emails

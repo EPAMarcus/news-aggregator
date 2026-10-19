@@ -176,6 +176,22 @@ def test_no_documents_is_an_error_without_a_call(settings):
     assert client.calls == []
 
 
+def test_revision_continues_the_conversation_and_names_the_problems(settings):
+    summarizer, client, _ = make(settings, message(), message())
+
+    summarizer.summarize("daily", "task", DOCS)
+    revision = summarize.Revision(previous="## Tech\n- too long\n", problems=["Too many bullets."])
+    summarizer.summarize("daily", "task", DOCS, revision=revision)
+
+    first, retry = client.calls
+    messages = retry["messages"]
+    assert [m["role"] for m in messages] == ["user", "assistant", "user"]
+    assert messages[0] == first["messages"][0]
+    assert messages[1]["content"] == "## Tech\n- too long"
+    assert "- Too many bullets." in messages[2]["content"]
+    assert retry["system"] == first["system"] and "tools" not in retry
+
+
 # --- response -----------------------------------------------------------------------------------
 
 
