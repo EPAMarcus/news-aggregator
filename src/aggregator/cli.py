@@ -25,6 +25,7 @@ from aggregator import __version__
 from aggregator.alerts import Alert, Alerter
 from aggregator.config import Config, ConfigError, load_config
 from aggregator.daily import DailySteps
+from aggregator.gitsync import Committer
 from aggregator.pipeline import RunRequest, StepFailed, Steps, run
 from aggregator.release import Releaser
 from aggregator.schedule import LEVELS
@@ -78,9 +79,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def default_steps(request: RunRequest, config: Config) -> Steps:
     """The real steps where they exist (daily), the stubs for the other levels. Only the daily
-    level publishes a GitHub release; the stub digests of the other levels are not released."""
+    level is committed and released; the stub digests of the other levels are not."""
     if request.level == "daily":
-        return DailySteps(config).steps(Steps(release=Releaser().release))
+        publish = Steps(commit=Committer().commit, release=Releaser().release)
+        return DailySteps(config).steps(publish)
     return Steps()
 
 

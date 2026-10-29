@@ -8,6 +8,7 @@ from aggregator import __version__
 from aggregator.cli import default_steps, main
 from aggregator.daily import DailySteps
 from aggregator.gh import GhResult
+from aggregator.gitsync import Committer
 from aggregator.pipeline import Body, Collected, StepFailed, Steps, skip_release, stub_collect
 from aggregator.release import Releaser
 
@@ -161,6 +162,7 @@ def test_default_steps_are_real_for_daily_only(env):
     daily = default_steps(RunRequest("daily", TODAY), config)
     assert isinstance(daily.collect.__self__, DailySteps)
     assert isinstance(daily.release.__self__, Releaser)
+    assert isinstance(daily.commit.__self__, Committer)
     for level in ("weekly", "monthly", "yearly"):
         steps = default_steps(RunRequest(level, TODAY), config)
         assert steps == Steps() and steps.release is skip_release

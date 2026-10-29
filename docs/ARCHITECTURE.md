@@ -56,7 +56,8 @@ src/aggregator/
   render.py               # front matter, digest Markdown
   release.py              # GitHub release per digest (gh CLI)
   alerts.py               # run wrapper, alert issues (gh CLI)
-  store.py                # read/write digests, git commit/push
+  store.py                # read/write digests
+  gitsync.py              # git commit/push of digests/ and state/
 digests/                  # generated, committed
 state/
   seen.json               # item IDs, pruned after 30 days
@@ -97,7 +98,7 @@ All fetchers produce a common `Item` (source id, source topic tag, title, text, 
 `rollup.py` implements the spec: weekly reads the week's dailies; monthly reads existing fully-contained weeklies plus dailies for all other days (rule 4.1); yearly reads existing monthlies. Missing files are skipped. If nothing is available, no digest is produced and an alert is raised.
 
 ### 3.6 Store and sync
-The workflow commits only `digests/` and `state/` as the `github-actions[bot]` user, using `GITHUB_TOKEN` with `contents: write`, after `git pull --rebase`. The commit step returns the SHA of the pushed commit, which the release step uses as the tag target. The owner's device pulls on demand. An optional launchd job can pull automatically later.
+`gitsync.py` commits only `digests/` and `state/` (as the `github-actions[bot]` user in Actions, with the user's own git identity locally), then runs `git pull --rebase --autostash` and pushes to the current branch, using `GITHUB_TOKEN` with `contents: write`. A rejected push is retried with a new rebase, up to 3 attempts; a rebase conflict is aborted and fails the step. The commit step returns the SHA of the pushed commit, which the release step uses as the tag target. The owner's device pulls on demand. An optional launchd job can pull automatically later.
 
 ### 3.7 Release
 After the push, `release.py` creates the release with the `gh` CLI (`GH_TOKEN` is the workflow's `GITHUB_TOKEN`): tag `<level>-<period>` on the pushed commit, title `[Digest] Daily 2026-10-15`, body the digest without front matter (spec 6). The `gh` call is injected so that tests can stub it. The step is idempotent: an existing release is left alone. When the guard finds the digest already written but no release for it, the run creates the release, so a failed publish is repaired by rerunning. A dry run creates no release. The owner is notified by GitHub's release notifications; nothing is sent by email.

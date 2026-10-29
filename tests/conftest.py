@@ -1,6 +1,6 @@
 import pytest
 
-from aggregator import gh
+from aggregator import gh, gitsync
 
 
 @pytest.fixture(autouse=True)
@@ -12,3 +12,14 @@ def no_real_gh(monkeypatch):
         raise AssertionError(f"a test called the real gh: gh {' '.join(args)}")
 
     monkeypatch.setattr(gh, "run_gh", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_real_git(monkeypatch):
+    """No test may commit or push in the project repo. Tests that need git run the saved
+    original against their own repos in tmp_path (test_gitsync.py)."""
+
+    def refuse(args, cwd):
+        raise AssertionError(f"a test called the real git: git {' '.join(args)} in {cwd}")
+
+    monkeypatch.setattr(gitsync, "run_git", refuse)

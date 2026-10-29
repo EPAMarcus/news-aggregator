@@ -40,7 +40,7 @@ Each digest is published as a GitHub release (tag `daily-2026-10-15`, title `[Di
 1. On the repo page, **Watch → Custom → Releases**.
 2. In GitHub **Settings → Notifications**, enable email for watched repositories and, if needed, route this repo to the inbox you want under **Custom routing**.
 
-Releases are created with the [GitHub CLI](https://cli.github.com/) (`gh`), which must be installed and logged in (`gh auth login`) for a local run that is not a `--dry-run`; in GitHub Actions it uses `GITHUB_TOKEN`. Only the daily level is released for now; the other levels still produce stub digests. A run that finds a digest already written but not released creates the release.
+A run that is not a `--dry-run` commits `digests/` and `state/` (nothing else), rebases onto `origin` and pushes the current branch, then creates the release with the [GitHub CLI](https://cli.github.com/) (`gh`), which must be installed and logged in (`gh auth login`) for a local run; in GitHub Actions both use `GITHUB_TOKEN`. Only the daily level is committed and released for now; the other levels still produce stub digests. A run that finds a digest already written but not released creates the release.
 
 Failures exit non-zero, which triggers GitHub's workflow-failure email, and open an issue `[Alert] Daily 2026-10-15` labelled `alert` with the errors and the run log; a repeated failure for the same digest comments on it. The issue is assigned to `ALERT_ASSIGNEE` if set, else to the repository owner (in Actions) or the logged-in `gh` user (locally). A `--dry-run` never raises an alert.
 
