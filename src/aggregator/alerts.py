@@ -96,8 +96,10 @@ def render_alert(alert: Alert, url: str | None = None) -> str:
             "",
         ]
     lines.append(
-        f"To retry: `aggregator run --level {alert.level} --date <a day of {alert.period}>`. "
-        "A digest that was written but not released is released by the rerun."
+        f"To retry: `gh workflow run daily.yml -f level={alert.level} -f date=<a day of "
+        f"{alert.period}> -f dry_run=false`, or locally `aggregator run --level {alert.level} "
+        f"--date <a day of {alert.period}>`. A digest that was written but not released is "
+        "released by the rerun."
     )
     return "\n".join(lines) + "\n"
 

@@ -75,7 +75,8 @@ pyproject.toml
 - GitHub may start scheduled runs 10 to 60 minutes late. No time check is needed for that; the idempotency check makes duplicate triggers harmless.
 - "Last day of month" is not expressible in cron, so `monthly.yml` triggers on days 28 to 31 at 20:00 UTC and the script proceeds only if tomorrow is the 1st (`schedule.is_due`).
 - **Yearly** is a dependent job in `monthly.yml` (`needs: monthly`) that runs only on 31.12. This guarantees the December monthly is committed first, which a separate 21:00 cron could not.
-- All workflows share one `concurrency` group so that pushes never race.
+- All workflows share one `concurrency` group (`digests`, queued, never cancelled) so that pushes never race.
+- `daily.yml` runs at 06:00 UTC and has `workflow_dispatch` inputs `level`, `date`, `force` and `dry_run` (default true) for manual runs and backfills. Inputs reach the run script as environment variables, never interpolated into it. The checkout has the full history for the rebase before the push.
 
 ### 3.2 Fetchers (daily only)
 All fetchers produce a common `Item` (source id, source topic tag, title, text, published time, stable ID).
