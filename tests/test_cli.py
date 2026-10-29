@@ -7,7 +7,8 @@ import pytest
 from aggregator import __version__
 from aggregator.cli import default_steps, main
 from aggregator.daily import DailySteps
-from aggregator.pipeline import Collected, StepFailed, Steps, skip_release, stub_collect
+from aggregator.gh import GhResult
+from aggregator.pipeline import Body, Collected, StepFailed, Steps, skip_release, stub_collect
 from aggregator.release import Releaser
 
 
@@ -48,8 +49,27 @@ def stub_steps(request, config):
     return Steps()
 
 
-def cli(args, root, today=TODAY, make_steps=stub_steps):
-    return main(["run", *args], today=today, digests_dir=root, make_steps=make_steps)
+class RecordingAlerter:
+    """Records alerts instead of opening issues; `fail` simulates a gh failure."""
+
+    def __init__(self, fail: str | None = None):
+        self.fail = fail
+        self.alerts = []
+
+    def raise_alert(self, alert):
+        self.alerts.append(alert)
+        if self.fail:
+            raise StepFailed(self.fail)
+
+
+def cli(args, root, today=TODAY, make_steps=stub_steps, alerter=None):
+    return main(
+        ["run", *args],
+        today=today,
+        digests_dir=root,
+        make_steps=make_steps,
+        alerter=alerter or RecordingAlerter(),
+    )
 
 
 def test_run_dry_run_prints_the_digest_and_writes_nothing(tmp_path, env, capsys):
@@ -156,3 +176,151 @@ def test_run_with_a_failed_release_exits_with_an_error(tmp_path, env, capsys):
     assert cli(["--level", "daily"], tmp_path, make_steps=failing_release) == 1
     assert "release failed: gh release create" in capsys.readouterr().err
     assert (tmp_path / "daily" / "2026" / "2026-10-18.md").is_file()
+
+
+# --- alerts (spec 7, architecture section 5) ------------------------------------------------------
+
+
+def failing_summarize(message):
+    def make(request, config):
+        def summarize(req, cfg, collected):
+            raise StepFailed(message)
+
+        return Steps(collect=stub_collect, summarize=summarize)
+
+    return make
+
+
+def test_a_failed_run_raises_an_alert_with_the_error_and_the_log(tmp_path, env):
+    alerter = RecordingAlerter()
+    make = failing_summarize("Claude API error after 4 attempts: overloaded")
+
+    assert cli(["--level", "daily"], tmp_path, make_steps=make, alerter=alerter) == 1
+
+    (alert,) = alerter.alerts
+    assert (alert.level, alert.period, alert.outcome) == ("daily", "2026-10-18", "failed")
+    assert alert.errors == [
+        "daily digest 2026-10-18 failed, skipped: Claude API error after 4 attempts: overloaded"
+    ]
+    assert "Claude API error" in alert.log
+
+
+def test_no_inputs_raises_an_alert(tmp_path, env):
+    # Covers "all sources fail / no items" and "missing lower-level digests" (nothing to roll up).
+    alerter = RecordingAlerter()
+    for level in ("daily", "weekly"):
+        make = lambda req, cfg: Steps(collect=lambda r, c: Collected([]))  # noqa: E731
+        assert cli(["--level", level], tmp_path, make_steps=make, alerter=alerter) == 1
+    assert [(a.level, a.outcome) for a in alerter.alerts] == [
+        ("daily", "no-inputs"),
+        ("weekly", "no-inputs"),
+    ]
+    assert alerter.alerts[0].errors == ["no inputs for daily digest 2026-10-18, skipped"]
+
+
+def test_warnings_alone_raise_no_alert(tmp_path, env):
+    # One failing source, or a daily digest truncated after the retry (architecture 3.4).
+    def make(request, config):
+        def summarize(req, cfg, collected):
+            print("warning: source sap-news failed: timed out", file=sys.stderr)
+            return Body("## Tech\n- x\n", "claude-test", problems=["truncated to 10 bullets"])
+
+        return Steps(collect=stub_collect, summarize=summarize)
+
+    alerter = RecordingAlerter()
+    assert cli(["--level", "daily"], tmp_path, make_steps=make, alerter=alerter) == 0
+    assert alerter.alerts == []
+
+
+def test_warnings_are_included_in_an_alert(tmp_path, env):
+    def make(request, config):
+        def summarize(req, cfg, collected):
+            print("warning: source sap-news failed: timed out", file=sys.stderr)
+            raise StepFailed("Claude API error")
+
+        return Steps(collect=stub_collect, summarize=summarize)
+
+    alerter = RecordingAlerter()
+    cli(["--level", "daily"], tmp_path, make_steps=make, alerter=alerter)
+    assert alerter.alerts[0].warnings == ["source sap-news failed: timed out"]
+
+
+def test_a_duplicate_trigger_raises_no_alert(tmp_path, env):
+    alerter = RecordingAlerter()
+    assert cli(["--level", "daily"], tmp_path, alerter=alerter) == 0
+    assert cli(["--level", "daily"], tmp_path, alerter=alerter) == 0
+    assert alerter.alerts == []
+
+
+@pytest.mark.parametrize(
+    ("step", "message"),
+    [("commit", "push rejected after 3 attempts"), ("release", "HTTP 403")],
+)
+def test_a_failed_commit_or_release_raises_an_alert(tmp_path, env, step, message):
+    def fail(*args):
+        raise StepFailed(message)
+
+    alerter = RecordingAlerter()
+    make = lambda req, cfg: Steps(**{step: fail})  # noqa: E731
+    assert cli(["--level", "daily"], tmp_path, make_steps=make, alerter=alerter) == 1
+
+    (alert,) = alerter.alerts
+    assert alert.outcome == "publish-failed"
+    assert alert.errors == [f"daily digest 2026-10-18 was written, but {step} failed: {message}"]
+
+
+def test_a_config_error_raises_an_alert(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGGREGATOR_CONFIG_DIR", str(tmp_path / "missing"))
+    alerter = RecordingAlerter()
+
+    assert cli(["--level", "daily"], tmp_path, alerter=alerter) == 1
+
+    (alert,) = alerter.alerts
+    assert alert.outcome == "config-error"
+    assert "file not found" in alert.errors[0]
+
+
+def test_an_unexpected_error_raises_an_alert_with_the_traceback(tmp_path, env, capsys):
+    def make(request, config):
+        def summarize(req, cfg, collected):
+            raise KeyError("model")
+
+        return Steps(collect=stub_collect, summarize=summarize)
+
+    alerter = RecordingAlerter()
+    assert cli(["--level", "daily"], tmp_path, make_steps=make, alerter=alerter) == 1
+
+    (alert,) = alerter.alerts
+    assert alert.outcome == "crash"
+    assert alert.errors == ["unexpected error: KeyError: 'model'"]
+    assert "Traceback (most recent call last)" in alert.log
+    assert "Traceback" in capsys.readouterr().err  # still printed for the workflow log
+
+
+def test_a_failed_alert_still_exits_with_an_error(tmp_path, env, capsys):
+    alerter = RecordingAlerter(fail="gh issue create failed: HTTP 403")
+    make = failing_summarize("Claude API error")
+
+    assert cli(["--level", "daily"], tmp_path, make_steps=make, alerter=alerter) == 1
+    err = capsys.readouterr().err
+    assert "the alert issue could not be created (gh issue create failed: HTTP 403)" in err
+    assert "workflow-failure email is the only alert" in err
+
+
+def test_a_failed_dry_run_raises_no_alert(tmp_path, env):
+    alerter = RecordingAlerter()
+    make = failing_summarize("Claude API error")
+    assert cli(["--level", "daily", "--dry-run"], tmp_path, make_steps=make, alerter=alerter) == 1
+    assert alerter.alerts == []
+
+
+def test_the_default_alerter_is_used_when_none_is_given(tmp_path, env, monkeypatch, capsys):
+    from aggregator import gh
+
+    calls = []
+    monkeypatch.setattr(gh, "run_gh", lambda args, stdin=None: calls.append(args) or GhResult(0))
+    make = failing_summarize("Claude API error")
+    assert (
+        main(["run", "--level", "daily"], today=TODAY, digests_dir=tmp_path, make_steps=make) == 1
+    )
+    assert ["issue", "create"] in [c[:2] for c in calls]

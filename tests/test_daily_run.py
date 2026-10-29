@@ -292,6 +292,23 @@ def test_one_failing_source_does_not_fail_the_run(tmp_path, config):
     assert "warning: source sap-news failed: RuntimeError: boom" in h.log.getvalue()
 
 
+def test_all_sources_failing_is_a_failed_run(tmp_path, config):
+    feeds = Feeds(
+        **{
+            "sap-news": FetchResult.failure("sap-news", "HTTP 503"),
+            "hacker-news": FetchResult.failure("hacker-news", "timed out"),
+        }
+    )
+    h = harness(tmp_path, config, feeds=feeds)
+
+    outcome = h.run()
+
+    assert outcome is Outcome.FAILED
+    assert h.claude.calls == []
+    assert not h.digests.exists() and not h.state_path.exists()
+    assert "failed, skipped: all 3 sources failed" in h.log.getvalue()
+
+
 def test_claude_failure_skips_the_digest_and_marks_nothing_seen(tmp_path, config):
     import anthropic
     import httpx2

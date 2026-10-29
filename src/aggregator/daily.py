@@ -205,6 +205,9 @@ class DailySteps:
         for result in fetched:
             if not result.ok:
                 self._say(f"warning: source {result.source_id} failed: {result.error}")
+        if fetched and not any(result.ok for result in fetched):
+            # One failing source is a warning; all of them failing is a failed run (spec 7).
+            raise StepFailed(f"all {len(fetched)} sources failed")
         for result in fresh:
             if result.ok:
                 self._say(f"source {result.source_id}: {len(result.items)} new items")

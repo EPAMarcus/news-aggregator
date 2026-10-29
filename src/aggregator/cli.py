@@ -1,22 +1,31 @@
 """Command line: `aggregator run --level <level> [--date YYYY-MM-DD] [--force] [--dry-run]`.
 
 Exit codes: 0 when the digest was written, printed (dry run), not due or already there; 1 for a
-configuration error or a due digest that could not be produced or published (no inputs, failed
-step, failed release), so that the workflow can alert (#16); 2 for bad arguments.
+configuration error, an unexpected error or a due digest that could not be produced or published
+(no inputs, failed step, failed release); 2 for bad arguments.
+
+Every exit code 1 of a run that is not a dry run also raises an alert issue (`aggregator.alerts`,
+spec 7) with the errors and the run log. The non-zero exit triggers GitHub's workflow-failure
+email, which is the only alert if the issue cannot be created.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import sys
+import traceback
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import TextIO
 
 from aggregator import __version__
+from aggregator.alerts import Alert, Alerter
 from aggregator.config import Config, ConfigError, load_config
 from aggregator.daily import DailySteps
-from aggregator.pipeline import RunRequest, Steps, run
+from aggregator.pipeline import RunRequest, StepFailed, Steps, run
 from aggregator.release import Releaser
 from aggregator.schedule import LEVELS
 from aggregator.store import DEFAULT_DIGESTS_DIR
@@ -75,12 +84,52 @@ def default_steps(request: RunRequest, config: Config) -> Steps:
     return Steps()
 
 
+class _Tee(io.TextIOBase):
+    """Writes to several streams: stderr as usual, and a buffer for the alert's run log."""
+
+    def __init__(self, *streams: TextIO) -> None:
+        self.streams = streams
+
+    def write(self, text: str) -> int:
+        for stream in self.streams:
+            stream.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
+
+
+def _prefixed(log: str, prefix: str) -> list[str]:
+    return [line.removeprefix(prefix) for line in log.splitlines() if line.startswith(prefix)]
+
+
+def _run(
+    request: RunRequest,
+    digests_dir: Path,
+    make_steps: Callable[[RunRequest, Config], Steps],
+) -> tuple[str | None, list[str]]:
+    """Run once. Returns the failure (None on success) and its errors, if not in the log."""
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        print(f"configuration error:\n{exc}", file=sys.stderr)
+        return "config-error", [f"configuration error: {exc}"]
+    try:
+        outcome = run(request, config, steps=make_steps(request, config), digests_dir=digests_dir)
+    except Exception as exc:  # the run wrapper of spec 7: a bug must still alert
+        traceback.print_exc()
+        return "crash", [f"unexpected error: {type(exc).__name__}: {exc}"]
+    return (outcome.value if outcome.is_error else None), []
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
     today: date | None = None,
     digests_dir: Path = DEFAULT_DIGESTS_DIR,
     make_steps: Callable[[RunRequest, Config], Steps] = default_steps,
+    alerter: Alerter | None = None,
 ) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -99,10 +148,28 @@ def main(
         force=args.force,
         dry_run=args.dry_run,
     )
+    log = io.StringIO()
+    with contextlib.redirect_stderr(_Tee(sys.stderr, log)):
+        failure, errors = _run(request, digests_dir, make_steps)
+    if failure is None:
+        return EXIT_OK
+    if request.dry_run:
+        return EXIT_ERROR  # a dry run publishes nothing, not even an alert
+
+    alert = Alert(
+        level=request.level,
+        period=request.period,
+        outcome=failure,
+        errors=errors or _prefixed(log.getvalue(), "error: "),
+        warnings=_prefixed(log.getvalue(), "warning: "),
+        log=log.getvalue(),
+    )
     try:
-        config = load_config()
-    except ConfigError as exc:
-        print(f"configuration error:\n{exc}", file=sys.stderr)
-        return EXIT_ERROR
-    outcome = run(request, config, steps=make_steps(request, config), digests_dir=digests_dir)
-    return EXIT_ERROR if outcome.is_error else EXIT_OK
+        (alerter or Alerter()).raise_alert(alert)
+    except StepFailed as exc:
+        print(
+            f"error: the alert issue could not be created ({exc}); GitHub's workflow-failure "
+            "email is the only alert",
+            file=sys.stderr,
+        )
+    return EXIT_ERROR
