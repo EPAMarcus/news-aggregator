@@ -1,0 +1,72 @@
+name: Daily digest
+
+# Architecture 3.1: one UTC cron entry, no local-time check. A late or duplicate trigger is
+# harmless: the run exits if the digest already exists (and only repairs a missing release).
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  # Manual runs and backfills. Without a date this behaves like the scheduled run for today.
+  workflow_dispatch:
+    inputs:
+      level:
+        description: Digest level
+        type: choice
+        default: daily
+        options: [daily, weekly, monthly, yearly]
+      date:
+        description: Any day of the period (YYYY-MM-DD); empty for today, with the due check
+        type: string
+        default: ""
+      force:
+        description: Replace an existing digest
+        type: boolean
+        default: false
+      dry_run:
+        description: Print the digest only; no commit, no release, no alert
+        type: boolean
+        default: true
+
+# contents: commit, push and release; issues: alert issues (architecture 4)
+permissions:
+  contents: write
+  issues: write
+
+# Shared by all digest workflows so that their pushes never race; queued, never cancelled.
+concurrency:
+  group: digests
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      # Full history so that `git pull --rebase` always finds the merge base. The checkout keeps
+      # GITHUB_TOKEN in the git config, which the push uses.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      # uv installs the Python version pinned in .python-version
+      - name: Install dependencies
+        run: uv sync --locked --no-dev
+
+      # Inputs reach the script as environment variables, never interpolated into it.
+      - name: Run
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          LEVEL: ${{ inputs.level || 'daily' }}
+          DATE: ${{ inputs.date }}
+          FORCE: ${{ inputs.force }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=(run --level "$LEVEL")
+          if [ -n "$DATE" ]; then args+=(--date "$DATE"); fi
+          if [ "$FORCE" = "true" ]; then args+=(--force); fi
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          uv run --no-sync aggregator "${args[@]}"

@@ -4,7 +4,7 @@ Contains a configurable news aggreagtor that collects daily, weekly, monthly and
 
 See [docs/SPEC.md](docs/SPEC.md) for requirements and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 
-> **Status:** early development. Only the project skeleton exists so far; the digest pipeline is tracked in the [GitHub issues](https://github.com/EPAMarcus/news-aggregator/issues).
+> **Status:** early development. The daily digest runs end to end (RSS sources, Claude summary, commit, release, alerts); weekly, monthly and yearly still produce stub digests. Progress is tracked in the [GitHub issues](https://github.com/EPAMarcus/news-aggregator/issues).
 
 ## Setup
 
@@ -26,7 +26,27 @@ uv run python -m aggregator --help  # same, as a module
 uv run aggregator --version
 ```
 
-The `run --level <daily|weekly|monthly|yearly>` command is not implemented yet.
+```sh
+uv run aggregator run --level daily --dry-run            # print today's digest, change nothing
+uv run aggregator run --level daily --date 2026-10-15    # backfill: no due check
+uv run aggregator run --level daily --date 2026-10-15 --force  # replace an existing digest
+```
+
+Without `--date`, a run is the scheduled run for today (UTC) and does nothing if the level is not due. The daily level needs `ANTHROPIC_API_KEY`.
+
+### Scheduled and manual runs (GitHub Actions)
+
+[.github/workflows/daily.yml](.github/workflows/daily.yml) runs the daily digest every day at 06:00 UTC. It needs the repository secret `ANTHROPIC_API_KEY`; commits, releases and alert issues use the workflow's `GITHUB_TOKEN`. All digest workflows share the concurrency group `digests`, so their pushes never race.
+
+Manual runs and backfills use the same workflow. A manual run is a dry run unless `dry_run` is set to false:
+
+```sh
+gh workflow run daily.yml                                          # dry run for today
+gh workflow run daily.yml -f date=2026-10-15 -f dry_run=false      # backfill
+gh workflow run daily.yml -f date=2026-10-15 -f force=true -f dry_run=false
+```
+
+or use **Actions → Daily digest → Run workflow**. To pause the schedule: `gh workflow disable daily.yml` (and `enable` to resume).
 
 ## Configuration
 
