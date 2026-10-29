@@ -8,7 +8,7 @@ from aggregator.config import ConfigError, load_config
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-ENV = {"RECIPIENT_EMAIL": "owner@example.com"}
+ENV: dict[str, str] = {}
 
 SETTINGS = """
     categories: [Tech, SAP, Other]
@@ -137,7 +137,6 @@ def test_web_and_newsletter_fields(tmp_path):
         "stale_after_days: 0",
         "limits: {daily_bullets: -1}",
         "unexpected_key: 1",
-        "recipient: owner@example.com",  # comes from the environment, not the file
     ],
 )
 def test_invalid_settings_are_rejected(tmp_path, settings_line):
@@ -177,26 +176,11 @@ def test_missing_file_and_bad_yaml(tmp_path):
         load(write_config(tmp_path, sources="- just\n- a list\n"))
 
 
-def test_recipient_comes_from_the_environment(tmp_path):
-    config = load(write_config(tmp_path), {"RECIPIENT_EMAIL": "  me@example.org "})
-    assert config.recipient == "me@example.org"
-
-
-def test_recipient_defaults_to_the_process_environment(tmp_path, monkeypatch):
-    monkeypatch.setenv("RECIPIENT_EMAIL", "proc@example.org")
-    assert load_config(write_config(tmp_path)).recipient == "proc@example.org"
-
-
-@pytest.mark.parametrize("env", [{}, {"RECIPIENT_EMAIL": ""}, {"RECIPIENT_EMAIL": "  "}])
-def test_missing_recipient_is_rejected(tmp_path, env):
-    with pytest.raises(ConfigError, match="RECIPIENT_EMAIL: environment variable is not set"):
-        load(write_config(tmp_path), env)
-
-
-@pytest.mark.parametrize("value", ["not-an-email", "a b@example.com", "@example.com", "a@b"])
-def test_invalid_recipient_is_rejected(tmp_path, value):
-    with pytest.raises(ConfigError, match="RECIPIENT_EMAIL: must be an email address"):
-        load(write_config(tmp_path), {"RECIPIENT_EMAIL": value})
+def test_config_loads_without_recipient_email(tmp_path, monkeypatch):
+    # Digests are published as GitHub releases; there is no recipient to configure (#15).
+    monkeypatch.delenv("RECIPIENT_EMAIL", raising=False)
+    config = load_config(write_config(tmp_path))
+    assert not hasattr(config, "recipient")
 
 
 def test_committed_config_contains_no_email_address():

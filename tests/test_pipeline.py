@@ -15,11 +15,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 NOW = datetime(2026, 12, 31, 20, 5, tzinfo=UTC)
 YEAR_END = date(2026, 12, 31)  # a Thursday: daily, monthly and yearly are due, weekly is not
 SUNDAY = date(2026, 10, 18)
+SHA = "0123abcd"
 
 
 @pytest.fixture
 def config() -> Config:
-    return load_config(REPO_ROOT / "config", {"RECIPIENT_EMAIL": "owner@example.com"})
+    return load_config(REPO_ROOT / "config", {})
 
 
 class Recorder:
@@ -43,8 +44,8 @@ class Recorder:
                 ),
             ),
             record=lambda req, collected: self._call("record"),
-            commit=lambda digest, path: self._call("commit"),
-            email=lambda digest, path: self._call("email"),
+            commit=lambda digest, path: self._call("commit", SHA),
+            release=lambda digest, target: self._call("release"),
         )
 
     def _call(self, name, result=None):
@@ -71,7 +72,7 @@ def test_dry_run_has_no_side_effects_for_every_level(tmp_path, config, level):
 
     assert outcome is Outcome.DRY_RUN
     assert files(tmp_path) == []
-    assert rec.calls == ["collect", "summarize"]  # no record, commit or email
+    assert rec.calls == ["collect", "summarize"]  # no record, commit or release
     assert "dry run: would write" in log
     digest = parse_digest(out)
     assert (digest.meta.level, digest.meta.period) == (level, request.period)
@@ -94,7 +95,7 @@ def test_second_run_for_the_same_period_changes_nothing(tmp_path, config, level)
     request = RunRequest(level=level, day=YEAR_END, scheduled=False)
     first = Recorder()
     assert do_run(request, config, tmp_path, first.steps())[0] is Outcome.WRITTEN
-    assert first.calls == ["collect", "summarize", "record", "commit", "email"]
+    assert first.calls == ["collect", "summarize", "record", "commit", "release"]
     path = digest_path(level, request.period, tmp_path)
     before = path.read_bytes()
 
@@ -103,7 +104,7 @@ def test_second_run_for_the_same_period_changes_nothing(tmp_path, config, level)
 
     assert outcome is Outcome.EXISTS
     assert "already exists" in log
-    assert second.calls == []
+    assert second.calls == ["release"]  # repairs a missing release; a no-op if it exists
     assert path.read_bytes() == before
     assert files(tmp_path) == [path]
 
@@ -122,7 +123,7 @@ def test_force_replaces_an_existing_digest(tmp_path, config):
     outcome, _, _ = do_run(replace(request, force=True), config, tmp_path, rec.steps())
 
     assert outcome is Outcome.WRITTEN
-    assert rec.calls == ["collect", "summarize", "record", "commit", "email"]
+    assert rec.calls == ["collect", "summarize", "record", "commit", "release"]
     assert read_digest("daily", "2026-12-31", tmp_path).meta.inputs == ["new"]
 
 
@@ -179,7 +180,7 @@ def test_no_inputs_skips_the_digest(tmp_path, config):
 
 def test_written_digest_records_inputs_and_model(tmp_path):
     settings = Settings(categories=["Tech"], models={"monthly": "claude-test"})
-    config = Config(settings=settings, sources=[], recipient="owner@example.com")
+    config = Config(settings=settings, sources=[])
     request = RunRequest(level="monthly", day=YEAR_END, scheduled=False)
     do_run(request, config, tmp_path, Recorder(inputs=["2026-W50", "2026-12-14"]).steps())
     meta = read_digest("monthly", "2026-12", tmp_path).meta
@@ -221,10 +222,105 @@ def test_a_failing_collect_is_also_a_failed_run(tmp_path, config):
         (Outcome.EXISTS, False),
         (Outcome.NO_INPUTS, True),
         (Outcome.FAILED, True),
+        (Outcome.PUBLISH_FAILED, True),
     ],
 )
 def test_error_outcomes(outcome, error):
     assert outcome.is_error is error
+
+
+# --- release ------------------------------------------------------------------------------------
+
+
+def test_the_release_step_gets_the_written_digest_and_the_pushed_commit(tmp_path, config):
+    released = []
+    steps = replace(Recorder().steps(), release=lambda d, target: released.append((d, target)))
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+
+    do_run(request, config, tmp_path, steps)
+
+    ((digest, target),) = released
+    assert target == SHA
+    assert read_digest("daily", "2026-12-31", tmp_path) == digest
+
+
+def test_a_failed_release_keeps_the_digest_and_is_an_error(tmp_path, config):
+    def fail(digest, target):
+        raise StepFailed("gh release create daily-2026-12-31 failed: HTTP 403")
+
+    rec = Recorder()
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+
+    outcome, _, log = do_run(request, config, tmp_path, replace(rec.steps(), release=fail))
+
+    assert outcome is Outcome.PUBLISH_FAILED
+    assert "was written, but release failed: gh release create" in log
+    assert rec.calls == ["collect", "summarize", "record", "commit"]
+    assert digest_exists("daily", "2026-12-31", tmp_path)
+
+
+def test_a_failed_commit_skips_the_release(tmp_path, config):
+    def fail(digest, path):
+        raise StepFailed("push rejected")
+
+    rec = Recorder()
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+
+    outcome, _, log = do_run(request, config, tmp_path, replace(rec.steps(), commit=fail))
+
+    assert outcome is Outcome.PUBLISH_FAILED
+    assert "was written, but commit failed: push rejected" in log
+    assert rec.calls == ["collect", "summarize", "record"]
+
+
+def test_a_rerun_releases_an_existing_digest(tmp_path, config):
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+    do_run(request, config, tmp_path)  # written, but not released (the stub steps)
+
+    released = []
+    rec = Recorder()
+    steps = replace(rec.steps(), release=lambda d, target: released.append((d, target)))
+    outcome, _, _ = do_run(request, config, tmp_path, steps)
+
+    assert outcome is Outcome.EXISTS
+    ((digest, target),) = released
+    assert digest == read_digest("daily", "2026-12-31", tmp_path)
+    assert target is None  # already pushed: tag the head of the default branch
+    assert rec.calls == []  # nothing collected, summarized or committed
+
+
+def test_a_failed_release_on_rerun_is_an_error(tmp_path, config):
+    def fail(digest, target):
+        raise StepFailed("HTTP 502")
+
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+    do_run(request, config, tmp_path)
+    outcome, _, log = do_run(request, config, tmp_path, Steps(release=fail))
+
+    assert outcome is Outcome.PUBLISH_FAILED
+    assert "error: release of daily digest 2026-12-31 failed: HTTP 502" in log
+
+
+def test_an_unreadable_existing_digest_is_a_failed_release(tmp_path, config):
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+    do_run(request, config, tmp_path)
+    digest_path("daily", "2026-12-31", tmp_path).write_text("no front matter\n")
+
+    outcome, _, log = do_run(request, config, tmp_path, Recorder().steps())
+
+    assert outcome is Outcome.PUBLISH_FAILED
+    assert "missing front matter" in log
+
+
+def test_a_dry_run_of_an_existing_digest_releases_nothing(tmp_path, config):
+    request = RunRequest(level="daily", day=YEAR_END, scheduled=False)
+    do_run(request, config, tmp_path)
+
+    rec = Recorder()
+    outcome, _, _ = do_run(replace(request, dry_run=True), config, tmp_path, rec.steps())
+
+    assert outcome is Outcome.EXISTS
+    assert rec.calls == []
 
 
 def test_notes_and_problems_are_logged(tmp_path, config):

@@ -6,15 +6,17 @@
     4. write digests/<level>/... .md
     5. record (e.g. mark the daily items as seen), only after the write
     6. commit + push
-    7. send email
+    7. create the GitHub release
 
 The steps are passed in as `Steps`, so tests and dry runs can replace them. The daily level has
 real steps (`aggregator.daily.DailySteps`); weekly, monthly and yearly still use the stubs until
-their rollups exist (#21, #22, #24). Commit (#17) and email (#15) are not implemented yet and are
-skipped.
+their rollups exist (#21, #22, #24). Release is `aggregator.release.Releaser.release` (wired in by
+the CLI); commit (#17) is not implemented yet and is skipped.
 
 A run that cannot produce its digest (no inputs, or a failed step) writes nothing and returns an
-error outcome, which the CLI turns into a non-zero exit code for alerting (#16).
+error outcome, which the CLI turns into a non-zero exit code for alerting (#16). A commit or
+release that fails after the write also returns an error outcome; the digest file stays. A later
+run finds the digest and creates the missing release (architecture 3.7).
 """
 
 from __future__ import annotations
@@ -30,7 +32,13 @@ from typing import Any, TextIO
 from aggregator.config import Config
 from aggregator.render import Digest, FrontMatter, render_digest
 from aggregator.schedule import Level, is_due, period_label
-from aggregator.store import DEFAULT_DIGESTS_DIR, digest_exists, digest_path, write_digest
+from aggregator.store import (
+    DEFAULT_DIGESTS_DIR,
+    digest_exists,
+    digest_path,
+    read_digest,
+    write_digest,
+)
 
 
 class Outcome(StrEnum):
@@ -40,15 +48,18 @@ class Outcome(StrEnum):
     EXISTS = "exists"
     NO_INPUTS = "no-inputs"
     FAILED = "failed"
+    PUBLISH_FAILED = "publish-failed"  # written, but the commit or the release failed
 
     @property
     def is_error(self) -> bool:
-        """The digest was due but not produced: the run must raise an alert (spec 7)."""
-        return self in (Outcome.NO_INPUTS, Outcome.FAILED)
+        """The digest was due but not produced or not published: the run must raise an alert
+        (spec 7)."""
+        return self in (Outcome.NO_INPUTS, Outcome.FAILED, Outcome.PUBLISH_FAILED)
 
 
 class StepFailed(Exception):
-    """A step could not do its work (e.g. the Claude call failed). The digest is skipped."""
+    """A step could not do its work (e.g. the Claude call failed). Before the write, the digest
+    is skipped; in the commit or release step, the run ends with `Outcome.PUBLISH_FAILED`."""
 
 
 @dataclass(frozen=True)
@@ -87,7 +98,10 @@ class Body:
 Collect = Callable[[RunRequest, Config], Collected]
 Summarize = Callable[[RunRequest, Config, Collected], Body]
 Record = Callable[[RunRequest, Collected], None]
-Publish = Callable[[Digest, Path], None]
+# Returns the SHA of the pushed commit, or None when nothing was committed.
+Commit = Callable[[Digest, Path], str | None]
+# `target` is the commit to tag; None tags the head of the default branch.
+Release = Callable[[Digest, str | None], None]
 
 
 def stub_collect(request: RunRequest, config: Config) -> Collected:
@@ -107,8 +121,13 @@ def skip_record(request: RunRequest, collected: Collected) -> None:
     """Nothing to record."""
 
 
-def skip_publish(digest: Digest, path: Path) -> None:
-    """Commit and email are not implemented yet (#15, #17)."""
+def skip_commit(digest: Digest, path: Path) -> str | None:
+    """Commit is not implemented yet (#17)."""
+    return None
+
+
+def skip_release(digest: Digest, target: str | None) -> None:
+    """No release (the levels without real steps yet)."""
 
 
 @dataclass(frozen=True)
@@ -116,8 +135,8 @@ class Steps:
     collect: Collect = stub_collect
     summarize: Summarize = stub_summarize
     record: Record = skip_record
-    commit: Publish = skip_publish
-    email: Publish = skip_publish
+    commit: Commit = skip_commit
+    release: Release = skip_release
 
 
 def run(
@@ -131,7 +150,7 @@ def run(
     log: TextIO | None = None,
 ) -> Outcome:
     """Produce the digest for `request`. A dry run prints the digest to `out` (default: stdout)
-    and writes, records, commits and sends nothing. Status messages go to `log` (default:
+    and writes, records, commits and releases nothing. Status messages go to `log` (default:
     stderr)."""
     steps = steps or Steps()
     out = out or sys.stdout
@@ -143,7 +162,16 @@ def run(
         print(f"{level} digest not due on {request.day.isoformat()}, nothing to do", file=log)
         return Outcome.NOT_DUE
     if digest_exists(level, period, digests_dir) and not request.force:
-        print(f"{level} digest {period} already exists ({path}), nothing to do", file=log)
+        print(f"{level} digest {period} already exists ({path})", file=log)
+        if request.dry_run:
+            return Outcome.EXISTS
+        # A previous run may have written the digest but failed to release it. The release step
+        # leaves an existing release alone, so this is a no-op for a duplicate trigger.
+        try:
+            steps.release(read_digest(level, period, digests_dir), None)
+        except (StepFailed, OSError, ValueError) as exc:
+            print(f"error: release of {level} digest {period} failed: {exc}", file=log)
+            return Outcome.PUBLISH_FAILED
         return Outcome.EXISTS
 
     try:
@@ -181,6 +209,13 @@ def run(
     write_digest(digest, digests_dir, overwrite=request.force)
     print(f"wrote {path}", file=log)
     steps.record(request, collected)
-    steps.commit(digest, path)
-    steps.email(digest, path)
+    try:
+        step = "commit"
+        target = steps.commit(digest, path)
+        step = "release"
+        steps.release(digest, target)
+    except StepFailed as exc:
+        # The file stays: rerunning hits the exists guard, which retries the release.
+        print(f"error: {level} digest {period} was written, but {step} failed: {exc}", file=log)
+        return Outcome.PUBLISH_FAILED
     return Outcome.WRITTEN

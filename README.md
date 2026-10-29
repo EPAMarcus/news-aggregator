@@ -40,9 +40,9 @@ Each digest is published as a GitHub release (tag `daily-2026-10-15`, title `[Di
 1. On the repo page, **Watch → Custom → Releases**.
 2. In GitHub **Settings → Notifications**, enable email for watched repositories and, if needed, route this repo to the inbox you want under **Custom routing**.
 
-Failures exit non-zero, which triggers GitHub's workflow-failure email, and open an issue labelled `alert` assigned to the owner.
+Releases are created with the [GitHub CLI](https://cli.github.com/) (`gh`), which must be installed and logged in (`gh auth login`) for a local run that is not a `--dry-run`; in GitHub Actions it uses `GITHUB_TOKEN`. Only the daily level is released for now; the other levels still produce stub digests. A run that finds a digest already written but not released creates the release.
 
-Until #15 lands, loading the config still requires `RECIPIENT_EMAIL` to be set to an email address; its value is not used.
+Failures exit non-zero, which triggers GitHub's workflow-failure email, and open an issue labelled `alert` assigned to the owner.
 
 The config directory is the project's `config/`, whatever the working directory is. To use another one, set `AGGREGATOR_CONFIG_DIR`.
 

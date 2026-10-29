@@ -15,8 +15,6 @@ A digest file looks like this (spec section 6):
     ## Tech
     - ...
 
-Markdown to HTML email rendering will also live here (see ARCHITECTURE.md).
-
 The Sources section at the bottom of a daily digest is rendered here by code, never by the LLM
 (architecture 3.4), from the sources that actually contributed items to the digest:
 

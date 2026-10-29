@@ -1,8 +1,8 @@
 """Command line: `aggregator run --level <level> [--date YYYY-MM-DD] [--force] [--dry-run]`.
 
 Exit codes: 0 when the digest was written, printed (dry run), not due or already there; 1 for a
-configuration error or a due digest that could not be produced (no inputs, failed step), so that
-the workflow can alert (#16); 2 for bad arguments.
+configuration error or a due digest that could not be produced or published (no inputs, failed
+step, failed release), so that the workflow can alert (#16); 2 for bad arguments.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from aggregator import __version__
 from aggregator.config import Config, ConfigError, load_config
 from aggregator.daily import DailySteps
 from aggregator.pipeline import RunRequest, Steps, run
+from aggregator.release import Releaser
 from aggregator.schedule import LEVELS
 from aggregator.store import DEFAULT_DIGESTS_DIR
 
@@ -61,15 +62,16 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--dry-run",
         action="store_true",
-        help="print the digest instead of writing, committing and emailing it",
+        help="print the digest instead of writing, committing and releasing it",
     )
     return parser
 
 
 def default_steps(request: RunRequest, config: Config) -> Steps:
-    """The real steps where they exist (daily), the stubs for the other levels."""
+    """The real steps where they exist (daily), the stubs for the other levels. Only the daily
+    level publishes a GitHub release; the stub digests of the other levels are not released."""
     if request.level == "daily":
-        return DailySteps(config).steps()
+        return DailySteps(config).steps(Steps(release=Releaser().release))
     return Steps()
 
 
