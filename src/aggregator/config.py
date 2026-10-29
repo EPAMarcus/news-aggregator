@@ -18,7 +18,6 @@ DEFAULT_CONFIG_DIR = PROJECT_ROOT / "config"
 CONFIG_DIR_ENV_VAR = "AGGREGATOR_CONFIG_DIR"
 SETTINGS_FILE = "settings.yaml"
 SOURCES_FILE = "sources.yaml"
-RECIPIENT_ENV_VAR = "RECIPIENT_EMAIL"
 
 
 class ConfigError(Exception):
@@ -42,14 +41,6 @@ def _http_url(value: str) -> str:
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("must be an http(s) URL")
     return value.strip()
-
-
-def _email(value: str) -> str:
-    value = value.strip()
-    local, _, domain = value.partition("@")
-    if not local or "." not in domain or " " in value:
-        raise ValueError("must be an email address")
-    return value
 
 
 # --- settings ---------------------------------------------------------------------------------
@@ -170,7 +161,6 @@ class _SourcesFile(_Model):
 class Config(_Model):
     settings: Settings
     sources: list[Source]
-    recipient: str  # from the RECIPIENT_EMAIL environment variable, never from the repo
 
     @property
     def enabled_sources(self) -> list[Source]:
@@ -223,36 +213,21 @@ def _validate[T: BaseModel](model: type[T], path: Path, data: dict[str, Any]) ->
         raise ConfigError("\n".join(_format_errors(path, exc, data))) from None
 
 
-def _read_recipient(env: Mapping[str, str]) -> str:
-    value = env.get(RECIPIENT_ENV_VAR, "").strip()
-    if not value:
-        raise ConfigError(
-            f"{RECIPIENT_ENV_VAR}: environment variable is not set; it holds the address that "
-            "receives digests and alerts (a GitHub Actions secret, kept out of the repo)"
-        )
-    try:
-        return _email(value)
-    except ValueError as exc:
-        raise ConfigError(f"{RECIPIENT_ENV_VAR}: {exc}") from None
-
-
 def load_config(
     config_dir: Path | str | None = None, env: Mapping[str, str] | None = None
 ) -> Config:
-    """Load both config files and the recipient, and validate them, including cross-file rules.
+    """Load both config files and validate them, including cross-file rules.
 
-    `config_dir` defaults to the `AGGREGATOR_CONFIG_DIR` variable, then to the `config/` directory
-    of the project, never to the current working directory. The recipient comes from the
-    `RECIPIENT_EMAIL` variable. Both variables are read from `env` (default: the process
-    environment). Raises `ConfigError` with all problems found in the cross-file checks, or with
-    the problems of the first file or variable that fails validation.
+    `config_dir` defaults to the `AGGREGATOR_CONFIG_DIR` variable, read from `env` (default: the
+    process environment), then to the `config/` directory of the project, never to the current
+    working directory. Raises `ConfigError` with all problems found in the cross-file checks, or
+    with the problems of the first file that fails validation.
     """
     env = os.environ if env is None else env
     config_dir = Path(config_dir or env.get(CONFIG_DIR_ENV_VAR) or DEFAULT_CONFIG_DIR)
     settings_path = config_dir / SETTINGS_FILE
     sources_path = config_dir / SOURCES_FILE
 
-    recipient = _read_recipient(env)
     settings = _validate(Settings, settings_path, _read_yaml(settings_path))
     sources_data = _read_yaml(sources_path)
     sources = _validate(_SourcesFile, sources_path, sources_data).sources
@@ -271,4 +246,4 @@ def load_config(
     if problems:
         raise ConfigError("\n".join(problems))
 
-    return Config(settings=settings, sources=sources, recipient=recipient)
+    return Config(settings=settings, sources=sources)

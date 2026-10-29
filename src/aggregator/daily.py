@@ -171,14 +171,14 @@ class DailySteps:
         self.log = log or sys.stderr
 
     def steps(self, base: Steps | None = None) -> Steps:
-        """`base` with collect, summarize and record replaced (commit and email are kept)."""
+        """`base` with collect, summarize and record replaced (commit and release are kept)."""
         base = base or Steps()
         return Steps(
             collect=self.collect,
             summarize=self.summarize,
             record=self.record,
             commit=base.commit,
-            email=base.email,
+            release=base.release,
         )
 
     def _say(self, message: str) -> None:

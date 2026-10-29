@@ -108,7 +108,7 @@ def default_feeds() -> Feeds:
 @pytest.fixture
 def config() -> Config:
     settings = Settings(categories=["Tech", "SAP", "Other"], models={"daily": "claude-daily-test"})
-    return Config(settings=settings, sources=SOURCES, recipient="owner@example.com")
+    return Config(settings=settings, sources=SOURCES)
 
 
 class Harness:

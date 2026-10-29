@@ -7,7 +7,8 @@ import pytest
 from aggregator import __version__
 from aggregator.cli import default_steps, main
 from aggregator.daily import DailySteps
-from aggregator.pipeline import Collected, StepFailed, Steps, stub_collect
+from aggregator.pipeline import Collected, StepFailed, Steps, skip_release, stub_collect
+from aggregator.release import Releaser
 
 
 def test_help_exits_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
@@ -39,7 +40,6 @@ TODAY = date(2026, 10, 18)  # a Sunday
 
 @pytest.fixture
 def env(monkeypatch):
-    monkeypatch.setenv("RECIPIENT_EMAIL", "owner@example.com")
     monkeypatch.delenv("AGGREGATOR_CONFIG_DIR", raising=False)
 
 
@@ -106,9 +106,9 @@ def test_run_rejects_bad_arguments(tmp_path, env, capsys, args, message):
 
 
 def test_run_reports_config_errors(tmp_path, monkeypatch, capsys):
-    monkeypatch.delenv("RECIPIENT_EMAIL", raising=False)
+    monkeypatch.setenv("AGGREGATOR_CONFIG_DIR", str(tmp_path / "missing"))
     assert cli(["--level", "daily"], tmp_path) == 1
-    assert "RECIPIENT_EMAIL" in capsys.readouterr().err
+    assert "configuration error" in capsys.readouterr().err
     assert list(tmp_path.iterdir()) == []
 
 
@@ -140,5 +140,19 @@ def test_default_steps_are_real_for_daily_only(env):
     config = load_config()
     daily = default_steps(RunRequest("daily", TODAY), config)
     assert isinstance(daily.collect.__self__, DailySteps)
+    assert isinstance(daily.release.__self__, Releaser)
     for level in ("weekly", "monthly", "yearly"):
-        assert default_steps(RunRequest(level, TODAY), config) == Steps()
+        steps = default_steps(RunRequest(level, TODAY), config)
+        assert steps == Steps() and steps.release is skip_release
+
+
+def test_run_with_a_failed_release_exits_with_an_error(tmp_path, env, capsys):
+    def failing_release(request, config):
+        def release(digest, target):
+            raise StepFailed("gh release create daily-2026-10-18 failed: HTTP 403")
+
+        return Steps(release=release)
+
+    assert cli(["--level", "daily"], tmp_path, make_steps=failing_release) == 1
+    assert "release failed: gh release create" in capsys.readouterr().err
+    assert (tmp_path / "daily" / "2026" / "2026-10-18.md").is_file()
