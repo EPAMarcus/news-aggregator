@@ -10,8 +10,8 @@
 
 The steps are passed in as `Steps`, so tests and dry runs can replace them. The daily level has
 real steps (`aggregator.daily.DailySteps`); weekly, monthly and yearly still use the stubs until
-their rollups exist (#21, #22, #24). Release is `aggregator.release.Releaser.release` (wired in by
-the CLI); commit (#17) is not implemented yet and is skipped.
+their rollups exist (#21, #22, #24). Commit is `aggregator.gitsync.Committer.commit` and release is
+`aggregator.release.Releaser.release`, both wired in by the CLI.
 
 A run that cannot produce its digest (no inputs, or a failed step) writes nothing and returns an
 error outcome, which the CLI turns into a non-zero exit code for alerting (#16). A commit or
@@ -122,7 +122,7 @@ def skip_record(request: RunRequest, collected: Collected) -> None:
 
 
 def skip_commit(digest: Digest, path: Path) -> str | None:
-    """Commit is not implemented yet (#17)."""
+    """No commit (the levels without real steps yet)."""
     return None
 
 

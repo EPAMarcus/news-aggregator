@@ -5,7 +5,8 @@
 
 The release body is the digest Markdown without front matter; GitHub renders it, and the owner is
 notified through GitHub's release notifications. The tag points at `target`, the pushed commit
-that contains the digest (#17); without a target, gh tags the head of the default branch.
+that contains the digest (`aggregator.gitsync`); without a target, gh tags the head of the
+default branch.
 
 The step is idempotent: if the release for the tag already exists, it is left alone. The pipeline
 calls it again for a digest that already exists, so a failed release is repaired by rerunning.

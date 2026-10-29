@@ -5,7 +5,7 @@
     digests/monthly/YYYY/YYYY-MM.md
     digests/yearly/YYYY.md
 
-Committing and pushing the files is a separate step and will be added here later.
+Committing and pushing the files is a separate step (`aggregator.gitsync`).
 """
 
 from __future__ import annotations
