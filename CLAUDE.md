@@ -1,1 +1,3 @@
 When implementing changes just open a new branch locally, adhering to the naming convention of previous branches, and implement changes inside that new branch.
+
+When asked about checking an issue (e.g. "#14", "issue 14"), read it first with `gh issue view <n> --comments`. Don't infer its content from branch names or commits. This repo is hosted on github. If the github cli is not installed ask the user about it. 
