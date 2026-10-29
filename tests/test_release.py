@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import io
-import subprocess
 from datetime import UTC, datetime
 
 import pytest
 
-from aggregator import release as release_module
+from aggregator.gh import GhResult
 from aggregator.pipeline import StepFailed
-from aggregator.release import GhResult, Releaser, release_tag, release_title, run_gh
+from aggregator.release import Releaser, release_tag, release_title
 from aggregator.render import Digest, FrontMatter
 
 NOW = datetime(2026, 10, 15, 6, 3, 12, tzinfo=UTC)
@@ -126,36 +125,3 @@ def test_a_failed_create_without_output_reports_the_exit_code():
     gh = FakeGh(create_result=GhResult(4))
     with pytest.raises(StepFailed, match="exit code 4"):
         releaser(gh)[0].release(digest(), SHA)
-
-
-# --- running gh ---------------------------------------------------------------------------------
-
-
-def test_run_gh_passes_args_and_stdin(monkeypatch):
-    seen = {}
-
-    def fake_run(cmd, **kwargs):
-        seen.update(cmd=cmd, **kwargs)
-        return subprocess.CompletedProcess(cmd, 0, "out", "err")
-
-    monkeypatch.setattr(release_module.subprocess, "run", fake_run)
-    assert run_gh(["release", "view", "x"], "notes") == GhResult(0, "out", "err")
-    assert seen["cmd"] == ["gh", "release", "view", "x"]
-    assert seen["input"] == "notes"
-    assert seen["cwd"] == release_module.PROJECT_ROOT
-
-
-@pytest.mark.parametrize(
-    ("error", "message"),
-    [
-        (FileNotFoundError("gh"), "gh CLI is not installed"),
-        (subprocess.TimeoutExpired("gh", 60), "timed out"),
-    ],
-)
-def test_run_gh_failures_are_step_failures(monkeypatch, error, message):
-    def fake_run(cmd, **kwargs):
-        raise error
-
-    monkeypatch.setattr(release_module.subprocess, "run", fake_run)
-    with pytest.raises(StepFailed, match=message):
-        run_gh(["release", "view", "x"])

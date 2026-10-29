@@ -15,48 +15,16 @@ Any `gh` failure raises `StepFailed`, which the pipeline turns into an error out
 
 from __future__ import annotations
 
-import subprocess
 import sys
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TextIO
 
-from aggregator.config import PROJECT_ROOT
+from aggregator import gh as gh_cli
+from aggregator.gh import Gh
 from aggregator.pipeline import StepFailed
 from aggregator.render import Digest
 
-GH_TIMEOUT_SECONDS = 60.0
 TITLE_PREFIX = "[Digest]"
-
-
-@dataclass(frozen=True)
-class GhResult:
-    returncode: int
-    stdout: str = ""
-    stderr: str = ""
-
-
-# Runs `gh` with the given arguments and optional stdin; tests pass a stub.
-Gh = Callable[[Sequence[str], str | None], GhResult]
-
-
-def run_gh(args: Sequence[str], stdin: str | None = None) -> GhResult:
-    """Run `gh` in the project directory, so that it picks the repo from the git remote."""
-    try:
-        done = subprocess.run(
-            ["gh", *args],
-            input=stdin,
-            capture_output=True,
-            text=True,
-            cwd=PROJECT_ROOT,
-            timeout=GH_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except FileNotFoundError:
-        raise StepFailed("the gh CLI is not installed") from None
-    except subprocess.TimeoutExpired:
-        raise StepFailed(f"gh {args[0]} timed out after {GH_TIMEOUT_SECONDS:.0f}s") from None
-    return GhResult(done.returncode, done.stdout, done.stderr)
 
 
 def release_tag(digest: Digest) -> str:
@@ -71,12 +39,15 @@ def release_title(digest: Digest) -> str:
 
 @dataclass
 class Releaser:
-    gh: Gh = run_gh
+    gh: Gh | None = None  # default: `gh.run_gh`
     log: TextIO = field(default_factory=lambda: sys.stderr)
+
+    def _gh(self, args: list[str], stdin: str | None = None) -> gh_cli.GhResult:
+        return (self.gh or gh_cli.run_gh)(args, stdin)
 
     def exists(self, tag: str) -> bool:
         # Any failure counts as "not there": a real problem (auth, network) then fails the create.
-        return self.gh(["release", "view", tag, "--json", "tagName"], None).returncode == 0
+        return self._gh(["release", "view", tag, "--json", "tagName"]).returncode == 0
 
     def release(self, digest: Digest, target: str | None = None) -> None:
         """The pipeline's release step (`pipeline.Release`). Raises `StepFailed`."""
@@ -87,8 +58,7 @@ class Releaser:
         args = ["release", "create", tag, "--title", release_title(digest), "--notes-file", "-"]
         if target is not None:
             args += ["--target", target]
-        result = self.gh(args, digest.body)
+        result = self._gh(args, digest.body)
         if result.returncode != 0:
-            detail = (result.stderr or result.stdout).strip() or f"exit code {result.returncode}"
-            raise StepFailed(f"gh release create {tag} failed: {detail}")
+            raise StepFailed(f"gh release create {tag} failed: {result.detail}")
         print(f"released {tag}", file=self.log)
