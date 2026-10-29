@@ -1,4 +1,4 @@
-# News Aggregator: Architecture (v0.2, draft)
+# News Aggregator: Architecture (v0.3, draft)
 
 See `SPEC.md` for requirements and decisions.
 
@@ -21,13 +21,14 @@ See `SPEC.md` for requirements and decisions.
               │  3. summarize with Claude (per-level prompt, validation, 1 retry)
               │  4. write digests/<level>/... .md
               │  5. commit + push (rebase, concurrency-locked)
-              │  6. send email (SMTP)
+              │  6. create GitHub release (gh)
+              │  on failure: alert issue (gh), exit 1
               ▼
    ┌─────────────────────────┐   ┌──────────────────────────┐
    │ Git repo (source of     │   │ External                 │
    │ truth)                  │   │  RSS / web pages         │
-   │  config/  digests/      │   │  Gmail IMAP (newsletters)│
-   │  state/   prompts/      │   │  Gmail SMTP (outbound)   │
+   │  config/  digests/      │   │  Gmail IMAP (deferred)   │
+   │  state/   prompts/      │   │  GitHub releases, issues │
    └───────────┬─────────────┘   │  Anthropic API           │
                │ git pull        └──────────────────────────┘
                ▼
@@ -45,15 +46,16 @@ prompts/
 src/aggregator/
   cli.py                  # entry point: run --level --date --force
   schedule.py             # run guards (month end, year end), period math (ISO weeks)
-  sources/                # rss.py, web.py, newsletter.py (common Item model)
+  sources/                # rss.py, web.py, newsletter.py (deferred) (common Item model)
   dedupe.py               # seen-state handling
   health.py               # source health counters and flags
   summarize.py            # Claude calls (delimited untrusted data, backoff, revision turn)
   validate.py             # output validation (daily structure and bullet limit, truncation)
   daily.py                # daily prompt, validation, one retry
   rollup.py               # input selection for weekly/monthly/yearly (rule 4.1, 4.2)
-  render.py               # front matter, Markdown to HTML email
-  mailer.py               # SMTP send, alert emails
+  render.py               # front matter, digest Markdown
+  release.py              # GitHub release per digest (gh CLI)
+  alerts.py               # run wrapper, alert issues (gh CLI)
   store.py                # read/write digests, git commit/push
 digests/                  # generated, committed
 state/
@@ -78,7 +80,7 @@ pyproject.toml
 All fetchers produce a common `Item` (source id, source topic tag, title, text, published time, stable ID).
 - **rss**: `feedparser`; full text from the feed if present, otherwise the summary.
 - **web**: fetch the index page, extract article links (optional CSS selector), fetch unseen articles, extract the text with `trafilatura`. Best effort, with timeouts and a polite user agent.
-- **newsletter**: IMAP (`imaplib`/`imap-tools`) into the aggregator inbox, filter by sender per source, HTML to text. Message-ID is the stable ID.
+- **newsletter** (deferred, #12): IMAP (`imaplib`/`imap-tools`) into the aggregator inbox, filter by sender per source, HTML to text. Message-ID is the stable ID.
 - Fetchers run with a per-source timeout and isolated error handling; each result feeds `health.py`.
 
 ### 3.3 Dedupe and window
@@ -86,57 +88,60 @@ All fetchers produce a common `Item` (source id, source topic tag, title, text, 
 
 ### 3.4 Summarizer
 - Anthropic Python SDK; model per level from `settings.yaml` (default `claude-sonnet-5-5`; verify the current model ID before first run).
-- Inputs are passed as clearly delimited data; the prompt states that source text is untrusted content and must never be treated as instructions. The call uses no tools, and the only recipient is the fixed address, so the injection impact is limited to bad text in a digest.
+- Inputs are passed as clearly delimited data; the prompt states that source text is untrusted content and must never be treated as instructions. The call uses no tools, and the output only goes to a release in the private repo, so the injection impact is limited to bad text in a digest.
 - The daily prompt receives the item list (each item carries its source's optional `topic` tag as a clustering hint) and the category list. Weekly, monthly and yearly prompts receive only lower-level digests.
 - Output validation: bullet count for daily, word count for the other levels. One retry with the violation described; if it still fails, the output is accepted with truncation for the daily case and flagged in the alert for the others (decision to confirm during implementation).
 - The Sources section for daily digests is rendered by code from the actual contributing sources and health state, not written by the LLM.
 
 ### 3.5 Rollup selection
-`rollup.py` implements the spec: weekly reads the week's dailies; monthly reads existing fully-contained weeklies plus dailies for all other days (rule 4.1); yearly reads existing monthlies. Missing files are skipped. If nothing is available, no digest is produced and an alert is sent.
+`rollup.py` implements the spec: weekly reads the week's dailies; monthly reads existing fully-contained weeklies plus dailies for all other days (rule 4.1); yearly reads existing monthlies. Missing files are skipped. If nothing is available, no digest is produced and an alert is raised.
 
 ### 3.6 Store and sync
-The workflow commits only `digests/` and `state/` as the `github-actions[bot]` user, using `GITHUB_TOKEN` with `contents: write`, after `git pull --rebase`. The owner's device pulls on demand. An optional launchd job can pull automatically later.
+The workflow commits only `digests/` and `state/` as the `github-actions[bot]` user, using `GITHUB_TOKEN` with `contents: write`, after `git pull --rebase`. The commit step returns the SHA of the pushed commit, which the release step uses as the tag target. The owner's device pulls on demand. An optional launchd job can pull automatically later.
 
-### 3.7 Mailer
-SMTP over TLS to Gmail with an app password. It sends the digest email (HTML plus plain text) and failure alerts. Failure alerts are sent from a `try/except` wrapper around the whole run; if SMTP itself is the failure, GitHub's workflow-failure email covers it.
+### 3.7 Release
+After the push, `release.py` creates the release with the `gh` CLI (`GH_TOKEN` is the workflow's `GITHUB_TOKEN`): tag `<level>-<period>` on the pushed commit, title `[Digest] Daily 2026-10-15`, body the digest without front matter (spec 6). The `gh` call is injected so that tests can stub it. The step is idempotent: an existing release is left alone. When the guard finds the digest already written but no release for it, the run creates the release, so a failed publish is repaired by rerunning. A dry run creates no release. The owner is notified by GitHub's release notifications; nothing is sent by email.
+
+### 3.8 Alerts
+A `try/except` wrapper around the whole run turns every error outcome (no inputs, LLM failure after retries, all sources failing, failed commit or release) into an alert: the run exits non-zero, which triggers GitHub's workflow-failure email, and `alerts.py` opens an issue labelled `alert`, assigned to the owner, with the level, period and error. A repeated failure for the same digest comments on the open alert issue instead of opening a new one. If creating the issue fails, the non-zero exit and GitHub's failure email remain.
 
 ## 4. Secrets and access
 
 | Secret | Use |
 |---|---|
 | `ANTHROPIC_API_KEY` | Claude API |
-| `GMAIL_ADDRESS` | IMAP login and SMTP sender |
-| `GMAIL_APP_PASSWORD` | IMAP + SMTP (requires 2FA on the account) |
-| `RECIPIENT_EMAIL` | Digest and alert recipient |
+| `GITHUB_TOKEN` | Provided by Actions, not stored. Permissions `contents: write` (commit, release) and `issues: write` (alerts); passed to `gh` as `GH_TOKEN` |
 
-All of them live in GitHub Actions secrets, never in the repo. The repo is private. Please check GitHub's current free-tier limits for private repos (Actions minutes); expected usage is a few minutes per day.
+If the newsletter fetcher (#12) resumes, `GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` (IMAP, requires 2FA on the account) are added. Secrets live in GitHub Actions secrets, never in the repo. The repo is private. Please check GitHub's current free-tier limits for private repos (Actions minutes); expected usage is a few minutes per day.
 
 ## 5. Failure modes
 
 | Failure | Behavior |
 |---|---|
 | One source fails | Run continues; counter incremented; flagged after 3 consecutive failures |
-| All sources fail / no items | No daily digest; alert email |
+| All sources fail / no items | No daily digest; alert |
 | Claude API error | Retry with backoff, then skip the digest and alert |
 | Output validation fails twice | Per 3.4 |
 | Missing lower-level digests | Skipped, per spec |
 | Duplicate or late cron trigger | Idempotency guard |
 | Git push conflict | Rebase and retry; concurrency group prevents most cases |
-| Gmail credentials expired | Newsletter sources fail health check; alert |
-| Workflow disabled by GitHub | Not detected from inside; the missing daily email is the signal |
+| Commit or release fails after the write | Digest file stays; alert; a rerun creates the missing release |
+| Alert issue cannot be created | Non-zero exit; GitHub's workflow-failure email |
+| Workflow disabled by GitHub | Not detected from inside; the missing daily release notification is the signal |
 
 ## 6. Testing
 
 - Unit tests: period math (ISO weeks, month and year boundaries, the 4.1 selection rule), dedupe, health thresholds, digest validation.
-- Fetcher tests use recorded fixtures (sample feed, sample HTML, sample email).
-- Summarizer tested with a stubbed client; one manual end-to-end run via `workflow_dispatch` with a `--dry-run` flag (no commit, no email) before enabling the schedule.
+- Fetcher tests use recorded fixtures (sample feed, sample HTML; sample email once #12 resumes).
+- Release and alert steps tested with a stubbed `gh`.
+- Summarizer tested with a stubbed client; one manual end-to-end run via `workflow_dispatch` with a `--dry-run` flag (no commit, no release) before enabling the schedule.
 - Walk-through scenarios as test cases: 31.12. on a Wednesday, a month ending mid-week, a month ending on Sunday, a missing weekly.
 
 ## 7. Implementation phases
 
 1. Skeleton: repo, config loading, period math, tests.
-2. Daily pipeline end to end locally (RSS first, then newsletter, then web), dry run.
-3. GitHub Actions daily workflow, secrets, email, alerts.
+2. Daily pipeline end to end locally (RSS first, then web; newsletter deferred), dry run.
+3. GitHub Actions daily workflow, secrets, releases, alerts.
 4. Weekly and monthly rollups.
 5. Yearly rollup and the year-end chain.
 6. Source health reporting and polish (cost measurement after the first week).
@@ -144,5 +149,6 @@ All of them live in GitHub Actions secrets, never in the repo. The repo is priva
 ## 8. Trade-offs and alternatives considered
 
 - **GitHub Actions vs. BTP/VM:** Actions is free, has no server to maintain, and the git repo gives sync and history. The cost is imprecise cron timing and UTC-only schedules.
-- **IMAP app password vs. Gmail OAuth:** The app password does not expire; OAuth tokens for apps in testing mode may expire after 7 days (verify in Google's docs). The trade-off is a less granular permission model.
+- **Email via SMTP vs. GitHub release:** Sending email from the workflow is not possible for the owner, so each digest is a release and GitHub's release notification is the email. No mail credentials are needed and the digest is browsable in the repo. The trade-off is less control over the email's look, and delivery depends on the owner's GitHub notification settings.
+- **IMAP app password vs. Gmail OAuth** (newsletters, deferred): The app password does not expire; OAuth tokens for apps in testing mode may expire after 7 days (verify in Google's docs). The trade-off is a less granular permission model.
 - **Markdown as source of truth vs. a database:** It is simple and diffable, with no extra infrastructure. Rollup input selection must therefore read and parse files, which is acceptable at this scale.
