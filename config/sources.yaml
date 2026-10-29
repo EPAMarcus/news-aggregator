@@ -44,6 +44,12 @@ sources:
     url:  https://www.theverge.com/rss/index.xml
     topic: Tech
 
+  - id: iai
+    name: Institute of Art and Ideas RSS
+    type: rss
+    url: https://iai.tv/articles-proxy/rss
+    topic: Philosophy
+
 # Placeholders showing the other source types. Replace and enable them.
   # - id: some-ai-newsletter
   #   name: Example AI Newsletter

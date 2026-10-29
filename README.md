@@ -35,7 +35,14 @@ Two files in [config/](config/) control what is collected and how it is summariz
 - [config/settings.yaml](config/settings.yaml): top-level categories, model per level, length limits, `stale_after_days`.
 - [config/sources.yaml](config/sources.yaml): the source list (`rss`, `web` or `newsletter`), each with an optional `topic` and `enabled` flag. The field reference is in the file's header comment.
 
-The recipient of the digest and alert emails is not in the repo. Set it in the environment as `RECIPIENT_EMAIL` (locally `export RECIPIENT_EMAIL=you@example.com`; in GitHub Actions as a repository secret). Loading the config fails when it is missing or not an email address.
+Each digest is published as a GitHub release (tag `daily-2026-10-15`, title `[Digest] Daily 2026-10-15`, body the digest Markdown); the aggregator sends no email. To get each digest by email:
+
+1. On the repo page, **Watch → Custom → Releases**.
+2. In GitHub **Settings → Notifications**, enable email for watched repositories and, if needed, route this repo to the inbox you want under **Custom routing**.
+
+Failures exit non-zero, which triggers GitHub's workflow-failure email, and open an issue labelled `alert` assigned to the owner.
+
+Until #15 lands, loading the config still requires `RECIPIENT_EMAIL` to be set to an email address; its value is not used.
 
 The config directory is the project's `config/`, whatever the working directory is. To use another one, set `AGGREGATOR_CONFIG_DIR`.
 

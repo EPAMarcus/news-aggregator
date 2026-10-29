@@ -1,8 +1,8 @@
-# News Aggregator: Specification (v0.2, draft)
+# News Aggregator: Specification (v0.3, draft)
 
 ## 1. Goal
 
-A personal, hands-off news aggregator. It collects items from a configurable list of sources, produces concise high-level digests (daily, weekly, monthly, yearly), emails each digest, and stores each one as a Markdown file in a git repository that syncs to the owner's device. It runs in the cloud on a fixed schedule and does not depend on the owner's machine being on.
+A personal, hands-off news aggregator. It collects items from a configurable list of sources, produces concise high-level digests (daily, weekly, monthly, yearly), publishes each digest as a GitHub release, and stores each one as a Markdown file in a git repository that syncs to the owner's device. It runs in the cloud on a fixed schedule and does not depend on the owner's machine being on.
 
 ## 2. Decisions so far
 
@@ -14,10 +14,10 @@ A personal, hands-off news aggregator. It collects items from a configurable lis
 | Source of truth | The Markdown files in the git repo (no database) |
 | Device sync | `git pull` from the repo |
 | Source list | `config/sources.yaml` in the repo |
-| Newsletter intake | Dedicated Gmail account (`marcus.newsletters.aggregator@gmail.com`), read via IMAP with an app password |
-| Mail sending | Same Gmail account via SMTP (app password) |
+| Newsletter intake | Deferred (#12). Planned: dedicated Gmail account (`marcus.newsletters.aggregator@gmail.com`), read via IMAP with an app password |
+| Notification | GitHub's release notification email; the aggregator sends no email itself |
 | Content scope | Only sources listed in `sources.yaml`; public content only; English output |
-| Delivery | One email per digest, at every level |
+| Delivery | One GitHub release per digest, at every level |
 | Gaps | A missing or failed period is skipped, never blocks later runs |
 
 ## 3. Sources
@@ -25,7 +25,7 @@ A personal, hands-off news aggregator. It collects items from a configurable lis
 Types:
 - **rss**: RSS/Atom feed URL (also used for blogs and news sites that have a feed).
 - **web**: Best-effort scraping of a page that has no feed (index page URL, optional CSS selector for article links).
-- **newsletter**: Mail received in the aggregator inbox, matched by sender address.
+- **newsletter** (deferred, #12): Mail received in the aggregator inbox, matched by sender address.
 
 Each entry has: `id`, `name` (shown in the digest), `type`, type-specific fields, optional `topic` tag, optional `enabled` flag.
 
@@ -56,7 +56,7 @@ sources:
 ```
 
 ### Source health
-A source is **failing** when a fetch errors, times out, or returns no parseable entries at all. Having no new items is not a failure. After **3 consecutive failing runs**, the source is flagged in the daily Sources section and email with the suggestion to remove or fix it. A source that has produced no items at all for `stale_after_days` (default 30) is flagged as **stale**, which catches an unconfirmed newsletter subscription. The health counters live in `state/source-health.json`.
+A source is **failing** when a fetch errors, times out, or returns no parseable entries at all. Having no new items is not a failure. After **3 consecutive failing runs**, the source is flagged in the daily Sources section (and so in the release) with the suggestion to remove or fix it. A source that has produced no items at all for `stale_after_days` (default 30) is flagged as **stale**, which catches an unconfirmed newsletter subscription. The health counters live in `state/source-health.json`.
 
 ## 4. Schedule
 
@@ -104,21 +104,24 @@ digests/yearly/YYYY.md
 ```
 Each file starts with YAML front matter: `level`, `period`, `generated_at`, `model`, `inputs` (what it was built from).
 
-### Email
-- One email per digest, HTML rendered from the Markdown, with a plain-text alternative.
-- Subject format: `[Digest] Daily 2026-10-15` and so on.
-- Sent from the aggregator Gmail account to `marcus_szymanski@epam.com`. The first mails should be checked for spam or external-sender filtering on the EPAM side.
+### Release
+- One GitHub release per digest, created after the digest is committed and pushed; the tag points at that commit.
+- Tag format: `<level>-<period>`, so `daily-2026-10-15`, `weekly-2026-W42`, `monthly-2026-10`, `yearly-2026`.
+- Title format: `[Digest] Daily 2026-10-15` and so on.
+- Body: the digest Markdown without front matter, rendered by GitHub.
+- The owner watches the repo for releases (Watch → Custom → Releases), and GitHub emails each release to the owner's notification address (`marcus_szymanski@epam.com`). The first notifications should be checked for spam or external-sender filtering on the EPAM side.
 
 ## 7. Reliability and alerts
 
 - Runs are **idempotent**: if the output file for a period already exists, the run exits (unless forced), so duplicate cron triggers and retries are harmless.
 - Manual runs and backfills via `workflow_dispatch` with level and date inputs.
-- On failure, the owner gets an alert email; GitHub's own workflow-failure email serves as a fallback.
+- On failure, the run exits non-zero, which triggers GitHub's workflow-failure email, and opens an issue labelled `alert`, assigned to the owner so that GitHub notifies them. A repeated failure for the same digest comments on the open alert issue. If the issue cannot be created, the failure email alone is the alert.
 - Failure of one source never fails the run; failure of the LLM call or an empty input set skips the digest and raises an alert.
+- If the commit or the release fails after the digest is written, the file stays and an alert is raised. A rerun finds the digest without a release and creates the release.
 
 ## 8. Non-goals (first version)
 
-Authenticated or paywalled sources, relevance ranking by interest profile, translation, multiple recipients, a web UI, article links in digests.
+Authenticated or paywalled sources, relevance ranking by interest profile, translation, multiple recipients, sending email from the aggregator, a web UI, article links in digests.
 
 ## 9. Open items
 
