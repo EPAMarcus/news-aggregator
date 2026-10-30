@@ -14,11 +14,103 @@
 #   newsletter  from (sender address in the aggregator inbox)
 
 sources:
+  # --- SAP ---
   - id: sap-news
     name: SAP News Center
     type: rss
     url: https://news.sap.com/feed/
     topic: SAP
+
+  - id: sap-community-sap-blogs
+    name: SAP Community – Technology Blogs by SAP
+    type: rss
+    url: https://community.sap.com/khhcw49343/rss/board?board.id=technology-blog-sap
+    topic: SAP/Community
+
+  - id: sap-community-member-blogs
+    name: SAP Community – Technology Blogs by Members
+    type: rss
+    url: https://community.sap.com/khhcw49343/rss/board?board.id=technology-blog-members
+    topic: SAP/Community
+
+  - id: sap-community-appdev
+    name: SAP Community – Application Development Blogs
+    type: rss
+    url: https://community.sap.com/khhcw49343/rss/board?board.id=application-developmentblog-board
+    topic: SAP/Development
+
+  - id: cap-releases
+    name: CAP Docs Releases
+    type: rss
+    url: https://github.com/cap-js/docs/releases.atom
+    topic: SAP/CAP
+
+  - id: sap-ai-sdk-js
+    name: SAP Cloud SDK for AI (JS) Releases
+    type: rss
+    url: https://github.com/SAP/ai-sdk-js/releases.atom
+    topic: SAP/AI
+
+  - id: openui5-releases
+    name: OpenUI5 Releases
+    type: rss
+    url: https://github.com/SAP/openui5/releases.atom
+    topic: SAP/UI5
+
+  - id: sapinsider
+    name: SAPinsider
+    type: rss
+    url: https://sapinsider.org/feed/
+    topic: SAP
+
+  - id: e3mag
+    name: E3 Magazine
+    type: rss
+    url: https://e3mag.com/feed/
+    topic: SAP
+
+  - id: diginomica
+    name: diginomica
+    type: rss
+    url: https://diginomica.com/feed
+    topic: Business/Enterprise
+
+  # --- Tech / Architecture / AI ---
+  - id: infoq
+    name: InfoQ
+    type: rss
+    url: https://feed.infoq.com/
+    topic: Tech/Architecture
+
+  - id: pragmatic-engineer
+    name: The Pragmatic Engineer
+    type: rss
+    url: https://newsletter.pragmaticengineer.com/feed
+    topic: Tech
+
+  - id: bytebytego
+    name: ByteByteGo
+    type: rss
+    url: https://blog.bytebytego.com/feed
+    topic: Tech/Architecture
+
+  - id: latent-space
+    name: Latent Space
+    type: rss
+    url: https://www.latent.space/feed
+    topic: Tech/AI
+
+  - id: huggingface
+    name: Hugging Face Blog
+    type: rss
+    url: https://huggingface.co/blog/feed.xml
+    topic: Tech/AI
+
+  - id: mit-tech-review
+    name: MIT Technology Review
+    type: rss
+    url: https://www.technologyreview.com/feed/
+    topic: Tech
 
   - id: martin-fowler
     name: Martin Fowlers Blog
@@ -43,6 +135,19 @@ sources:
     type: rss
     url:  https://www.theverge.com/rss/index.xml
     topic: Tech
+
+  # --- Business / Science / Philosophy ---
+  - id: aeon
+    name: Aeon
+    type: rss
+    url: https://aeon.co/feed.rss
+    topic: Philosophy
+
+  - id: daily-nous
+    name: Daily Nous
+    type: rss
+    url: https://dailynous.com/feed/
+    topic: Philosophy
 
   - id: iai
     name: Institute of Art and Ideas RSS
