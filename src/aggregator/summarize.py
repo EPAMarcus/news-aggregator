@@ -91,8 +91,8 @@ class Document:
 
     @classmethod
     def from_item(cls, item: Item) -> Document:
-        # The topic tag is a clustering hint (spec 3). IDs and URLs stay out: they cost tokens
-        # and digests contain no links (spec 8).
+        # The topic tag is a clustering hint (spec 3). IDs and URLs stay out: they cost tokens,
+        # and Claude cites documents by index; the links are added by code (render.py).
         return cls(
             content=item.text,
             title=item.title,

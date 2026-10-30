@@ -87,6 +87,8 @@ Tech (AI, Cloud & Dev), SAP, Business, Science, World, Other.
 | Level | Length limit | Sources section |
 |---|---|---|
 | Daily | at most 10 bullets in total | Yes, source names only, at the bottom, plus health warnings |
+
+Each daily bullet ends with the sources it is based on, each linked to its article: `- A lab released a new model. ([Hacker News](<url>), [The Verge](<url>))`. Two articles from one source are numbered (`Hacker News 1`, `Hacker News 2`); an item without a usable http(s) URL shows the source name without a link.
 | Weekly | at most 300 words | No |
 | Monthly | about 1 page (about 500 words) | No |
 | Yearly | about 5 pages (about 2500 words), focus on bigger trends | No |
@@ -121,7 +123,7 @@ Each file starts with YAML front matter: `level`, `period`, `generated_at`, `mod
 
 ## 8. Non-goals (first version)
 
-Authenticated or paywalled sources, relevance ranking by interest profile, translation, multiple recipients, sending email from the aggregator, a web UI, article links in digests.
+Authenticated or paywalled sources, relevance ranking by interest profile, translation, multiple recipients, sending email from the aggregator, a web UI.
 
 ## 9. Open items
 

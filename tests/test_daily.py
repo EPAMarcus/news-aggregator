@@ -10,11 +10,14 @@ from aggregator.daily import PromptError, daily_task, load_prompt, summarize_dai
 from aggregator.sources import Item
 from aggregator.summarize import DATA_TAG, Summarizer, SummarizerError
 
-VALID = "## Tech\n### AI\n- A lab released a model.\n- Prices dropped.\n## SAP\n- SAP shipped.\n"
+VALID = (
+    "## Tech\n### AI\n- A lab released a model. [1]\n- Prices dropped. [1, 3]\n"
+    "## SAP\n- SAP shipped. [2]\n"
+)
 
 
 def bullets(n: int) -> str:
-    return "## Tech\n" + "".join(f"- Bullet {i}.\n" for i in range(1, n + 1))
+    return "## Tech\n" + "".join(f"- Bullet {i}. [1]\n" for i in range(1, n + 1))
 
 
 def reply(text: str):
@@ -158,6 +161,28 @@ def test_structure_problem_triggers_the_retry(settings):
     assert body.ok and body.text == VALID
     assert any("introduction" in p for p in body.retried_for)
     assert "introduction" in client.calls[1]["messages"][2]["content"]
+
+
+def test_missing_citations_trigger_the_retry(settings):
+    uncited = "## Tech\n- A lab released a model.\n"
+    body, client = run(settings, uncited, VALID)
+
+    assert len(client.calls) == 2
+    assert body.ok and body.text == VALID
+    assert "do not end with the index numbers" in client.calls[1]["messages"][2]["content"]
+
+
+def test_citations_of_unknown_documents_left_after_retry_are_reported(settings):
+    wrong = "## Tech\n- A lab released a model. [7]\n"
+    body, _ = run(settings, wrong, wrong)
+    assert body.problems == [
+        "Bullets cite documents that do not exist: 7. Valid index numbers are 1 to 3."
+    ]
+
+
+def test_the_prompt_asks_for_citations(settings):
+    task = daily_task(settings)
+    assert "End every bullet with the `index` numbers" in task
 
 
 def test_structure_problem_left_after_retry_is_reported_not_fatal(settings):

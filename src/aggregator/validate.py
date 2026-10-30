@@ -8,10 +8,13 @@ The body format is (spec 5):
 
     ## Tech
     ### AI
-    - bullet
-    - bullet
+    - bullet [1]
+    - bullet [2, 5]
     ## SAP
-    - bullet
+    - bullet [3]
+
+Each daily bullet ends with the indices of the input documents it is based on; code replaces them
+with links to the articles (`render.link_citations`).
 
 Every list item counts as a bullet, nested or not, so nesting cannot hide bullets from the limit.
 """
@@ -25,6 +28,8 @@ from enum import StrEnum
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+\S")
+# The citation at the end of a bullet: "[3]" or "[3, 7]"; "[3][7]" and "[3], [7]" are accepted.
+_CITATION = re.compile(r"\s*((?:,?\s*\[\s*\d+(?:\s*,\s*\d+)*\s*\])+)\s*$")
 
 
 class Kind(StrEnum):
@@ -70,6 +75,50 @@ def parse(body: str) -> list[Line]:
 
 def count_bullets(body: str) -> int:
     return sum(line.kind is Kind.BULLET for line in parse(body))
+
+
+def bullet_ends(lines: Sequence[Line]) -> list[int]:
+    """The index of the last line of each bullet (the bullet line or its last wrapped line)."""
+    ends: list[int] = []
+    for index, line in enumerate(lines):
+        if line.kind is Kind.BULLET:
+            ends.append(index)
+        elif line.kind is Kind.CONTINUATION and ends:
+            ends[-1] = index
+    return ends
+
+
+def split_citation(text: str) -> tuple[str, list[int]]:
+    """The text without its trailing citation, and the cited indices (empty if none)."""
+    match = _CITATION.search(text)
+    if not match:
+        return text, []
+    return text[: match.start()], [int(n) for n in re.findall(r"\d+", match.group(1))]
+
+
+def citation_problems(body: str, documents: int) -> list[str]:
+    """Bullets without a citation, and citations of documents that do not exist."""
+    lines = parse(body)
+    uncited: list[str] = []
+    unknown: set[int] = set()
+    for end in bullet_ends(lines):
+        _, cited = split_citation(lines[end].raw)
+        if not cited:
+            uncited.append(lines[end].raw.strip())
+        unknown.update(n for n in cited if not 1 <= n <= documents)
+    problems = []
+    if uncited:
+        problems.append(
+            f"{len(uncited)} bullet(s) do not end with the index numbers of the documents they "
+            f'are based on, like "[3]" or "[3, 7]". First: "{_shorten(uncited[0])}".'
+        )
+    if unknown:
+        problems.append(
+            "Bullets cite documents that do not exist: "
+            + ", ".join(str(n) for n in sorted(unknown))
+            + f". Valid index numbers are 1 to {documents}."
+        )
+    return problems
 
 
 def bullet_limit_problem(body: str, max_bullets: int) -> str | None:
@@ -149,11 +198,16 @@ def structure_problems(body: str, categories: Sequence[str]) -> list[str]:
     return problems
 
 
-def check_daily(body: str, categories: Sequence[str], max_bullets: int) -> list[str]:
-    """Every rule the daily body breaks; empty when it is valid."""
+def check_daily(
+    body: str, categories: Sequence[str], max_bullets: int, documents: int | None = None
+) -> list[str]:
+    """Every rule the daily body breaks; empty when it is valid. Citations are checked when the
+    number of input `documents` is given."""
     problems = structure_problems(body, categories)
     if limit := bullet_limit_problem(body, max_bullets):
         problems.insert(0, limit)
+    if documents is not None:
+        problems += citation_problems(body, documents)
     return problems
 
 

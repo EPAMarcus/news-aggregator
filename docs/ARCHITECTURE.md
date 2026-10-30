@@ -94,6 +94,7 @@ All fetchers produce a common `Item` (source id, source topic tag, title, text, 
 - The daily prompt receives the item list (each item carries its source's optional `topic` tag as a clustering hint) and the category list. Weekly, monthly and yearly prompts receive only lower-level digests.
 - Output validation: bullet count for daily, word count for the other levels. One retry with the violation described; if it still fails, the output is accepted with truncation for the daily case and flagged in the alert for the others (decision to confirm during implementation).
 - The Sources section for daily digests is rendered by code from the actual contributing sources and health state, not written by the LLM.
+- Each daily bullet must end with the index numbers of the input documents it is based on (`[3]`, `[3, 7]`); a missing citation or an unknown index is a validation problem (one retry). Code then replaces the citation with the source names linked to the item URLs (`render.link_citations`). The LLM never sees or writes URLs, so links cannot be invented or injected through source content; feed URLs are accepted only as plain http(s) URLs.
 
 ### 3.5 Rollup selection
 `rollup.py` implements the spec: weekly reads the week's dailies; monthly reads existing fully-contained weeklies plus dailies for all other days (rule 4.1); yearly reads existing monthlies. Missing files are skipped. If nothing is available, no digest is produced and an alert is raised.

@@ -27,13 +27,21 @@ The Sources section at the bottom of a daily digest is rendered here by code, ne
 
 The Warnings sub-section is the slot for source health warnings (#25) and is left out when there
 are none.
+
+Each daily bullet ends with the sources it is based on, linked to the articles. Claude cites the
+input documents by index (`[1, 3]`); `link_citations` replaces that with the source names and the
+item URLs, so Claude never writes a URL:
+
+    - A lab released a new model. ([Hacker News](<https://...>), [The Verge](<https://...>))
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Self
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import (
@@ -48,7 +56,8 @@ from pydantic import (
 
 from aggregator.config import Source
 from aggregator.schedule import Level, period_start
-from aggregator.sources import FetchResult
+from aggregator.sources import FetchResult, Item
+from aggregator.validate import bullet_ends, parse, split_citation
 
 DELIMITER = "---"
 SOURCES_HEADING = "## Sources"
@@ -179,3 +188,65 @@ def with_sources_section(body: str, section: str) -> str:
     if not section:
         return body + "\n" if body else ""
     return f"{body}\n\n{section}" if body else section
+
+
+# --- links behind the daily bullets -----------------------------------------------------------
+
+
+def _link_target(url: str | None) -> str | None:
+    """The URL as a Markdown link destination, or None if it is not a plain http(s) URL. Feed
+    URLs are untrusted: the angle-bracket form cannot be broken out of without `<`, `>` or
+    whitespace, which are rejected."""
+    if not url or re.search(r"[\s<>]", url):
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    return f"<{url}>"
+
+
+def _link_text(name: str) -> str:
+    return re.sub(r"([\\\[\]])", r"\\\1", _one_line(name))
+
+
+def render_citation(items: Sequence[Item], names: Mapping[str, str]) -> str:
+    """'([Hacker News](<url>), [The Verge](<url>))'. Two items of one source are numbered."""
+    labels = [names.get(item.source_id, item.source_id) for item in items]
+    totals = {label: labels.count(label) for label in labels}
+    seen: dict[str, int] = {}
+    parts = []
+    for item, label in zip(items, labels, strict=True):
+        if totals[label] > 1:
+            seen[label] = seen.get(label, 0) + 1
+            label = f"{label} {seen[label]}"
+        target = _link_target(item.url)
+        text = _link_text(label)
+        parts.append(f"[{text}]({target})" if target else text)
+    return f"({', '.join(parts)})"
+
+
+def link_citations(body: str, items: Sequence[Item], names: Mapping[str, str]) -> str:
+    """Replace the citation at the end of each bullet with links to the cited items.
+
+    `items` are the input documents in the order Claude saw them (index 1 is `items[0]`), and
+    `names` maps source ids to the names shown in the digest. Unknown indices are dropped, a
+    citation of the same item twice is linked once, and a bullet without a valid citation keeps
+    its text without one. Validation reports such bullets before (`validate.citation_problems`).
+    """
+    lines = parse(body)
+    raws = [line.raw for line in lines]
+    for end in bullet_ends(lines):
+        text, cited = split_citation(raws[end])
+        if not cited:
+            continue
+        indices = [n for n in dict.fromkeys(cited) if 1 <= n <= len(items)]
+        # The same article from two feeds, or cited twice, is one link (the first citation).
+        chosen: dict[str, Item] = {}
+        for n in indices:
+            chosen.setdefault(items[n - 1].url or items[n - 1].id, items[n - 1])
+        raws[end] = (
+            f"{text.rstrip()} {render_citation(list(chosen.values()), names)}"
+            if chosen
+            else text.rstrip()
+        )
+    return "\n".join(raws)

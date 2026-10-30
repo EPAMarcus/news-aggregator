@@ -26,7 +26,12 @@ from typing import TextIO
 from aggregator.config import PROJECT_ROOT, Config, Settings, Source
 from aggregator.dedupe import DEFAULT_STATE_PATH, SeenState, StateError, select_new
 from aggregator.pipeline import Body, Collected, RunRequest, StepFailed, Steps
-from aggregator.render import contributing_sources, render_sources_section, with_sources_section
+from aggregator.render import (
+    contributing_sources,
+    link_citations,
+    render_sources_section,
+    with_sources_section,
+)
 from aggregator.sources import FetchResult, Item, fetch_all
 from aggregator.sources.base import Fetcher
 from aggregator.summarize import Document, Revision, Summarizer, SummarizerError, Summary
@@ -66,7 +71,7 @@ def daily_task(settings: Settings, prompts_dir: Path | None = None) -> str:
 
 @dataclass(frozen=True)
 class DailyBody:
-    text: str  # the digest body, without the Sources section (#11)
+    text: str  # the digest body with citations like "[3]", without the Sources section (#11)
     model: str
     attempts: int  # Claude answers requested: 1, or 2 after a retry
     retried_for: list[str] = field(default_factory=list)  # problems of the first answer
@@ -93,12 +98,12 @@ def summarize_daily(
     docs = [Document.from_item(item) for item in items]
 
     answers: list[Summary] = [summarizer.summarize("daily", task, docs)]
-    first_problems = check_daily(answers[0].text, categories, limit)
+    first_problems = check_daily(answers[0].text, categories, limit, len(docs))
     problems = first_problems
     if first_problems:
         revision = Revision(previous=answers[0].text, problems=first_problems)
         answers.append(summarizer.summarize("daily", task, docs, revision=revision))
-        problems = check_daily(answers[-1].text, categories, limit)
+        problems = check_daily(answers[-1].text, categories, limit, len(docs))
 
     final = answers[-1]
     text = final.text
@@ -107,7 +112,7 @@ def summarize_daily(
         # Draft over-length policy for the daily level (spec 9, item 2; decided in #26).
         text = truncate_bullets(text, limit)
         truncated_from = count
-        problems = check_daily(text, categories, limit)
+        problems = check_daily(text, categories, limit, len(docs))
 
     return DailyBody(
         text=text,
@@ -227,6 +232,9 @@ class DailySteps:
         except (SummarizerError, PromptError) as exc:
             raise StepFailed(str(exc)) from exc
 
+        # The documents were numbered in the order of `inputs.items`.
+        names = {source.id: source.name for source in inputs.sources}
+        text = link_citations(daily.text, inputs.items, names)
         section = render_sources_section(contributing_sources(inputs.sources, inputs.fresh))
         notes = [
             f"claude: {daily.model}, {daily.attempts} answer(s), "
@@ -241,7 +249,7 @@ class DailySteps:
                 f"{config.settings.limits.daily_bullets}",
             )
         return Body(
-            text=with_sources_section(daily.text, section),
+            text=with_sources_section(text, section),
             model=daily.model,
             notes=notes,
             problems=problems,
