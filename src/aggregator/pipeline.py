@@ -9,8 +9,9 @@
     7. create the GitHub release
 
 The steps are passed in as `Steps`, so tests and dry runs can replace them. The daily level has
-real steps (`aggregator.daily.DailySteps`); weekly, monthly and yearly still use the stubs until
-their rollups exist (#21, #22, #24). Commit is `aggregator.gitsync.Committer.commit` and release is
+real steps (`aggregator.daily.DailySteps`), and so have weekly and monthly
+(`aggregator.rollup.RollupSteps`); yearly still uses the stubs until its prompt exists (#24).
+Commit is `aggregator.gitsync.Committer.commit` and release is
 `aggregator.release.Releaser.release`, both wired in by the CLI.
 
 A run that cannot produce its digest (no inputs, or a failed step) writes nothing and returns an

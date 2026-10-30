@@ -57,7 +57,7 @@ from pydantic import (
 from aggregator.config import Source
 from aggregator.schedule import Level, period_start
 from aggregator.sources import FetchResult, Item
-from aggregator.validate import bullet_ends, parse, split_citation
+from aggregator.validate import Kind, bullet_ends, parse, split_citation
 
 DELIMITER = "---"
 SOURCES_HEADING = "## Sources"
@@ -250,3 +250,27 @@ def link_citations(body: str, items: Sequence[Item], names: Mapping[str, str]) -
             else text.rstrip()
         )
     return "\n".join(raws)
+
+
+_CITED_LINK = r"\[(?:\\.|[^\]\\])*\]\(<[^<>\s]*>\)"
+_CITED_NAME = r"[^()\[\],]+"
+_CITED = rf"(?:{_CITED_LINK}|{_CITED_NAME})"
+_RENDERED_CITATION = re.compile(rf"\s*\({_CITED}(?:,\s*{_CITED})*\)\s*$")
+
+
+def without_sources(body: str) -> str:
+    """A daily body as rollup input: without the Sources section and without the article links
+    behind the bullets, which would only cost tokens. A trailing parenthesis without a link is
+    kept, as it may be part of the text."""
+    lines = parse(body)
+    raws = [line.raw for line in lines]
+    for end in bullet_ends(lines):
+        match = _RENDERED_CITATION.search(raws[end])
+        if match and "](<" in match.group(0):
+            raws[end] = raws[end][: match.start()]
+    for index, line in enumerate(lines):
+        if line.kind is Kind.SECTION and line.raw.strip() == SOURCES_HEADING:
+            raws = raws[:index]
+            break
+    text = "\n".join(raws).strip()
+    return text + "\n" if text else ""

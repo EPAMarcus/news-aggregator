@@ -11,6 +11,7 @@ from aggregator.gh import GhResult
 from aggregator.gitsync import Committer
 from aggregator.pipeline import Body, Collected, StepFailed, Steps, skip_release, stub_collect
 from aggregator.release import Releaser
+from aggregator.rollup import RollupSteps
 
 
 def test_help_exits_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
@@ -154,18 +155,18 @@ def test_run_with_a_failed_step_exits_with_an_error(tmp_path, env, capsys):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_default_steps_are_real_for_daily_only(env):
+def test_default_steps_are_real_except_for_yearly(env):
     from aggregator.config import load_config
     from aggregator.pipeline import RunRequest
 
     config = load_config()
-    daily = default_steps(RunRequest("daily", TODAY), config)
-    assert isinstance(daily.collect.__self__, DailySteps)
-    assert isinstance(daily.release.__self__, Releaser)
-    assert isinstance(daily.commit.__self__, Committer)
-    for level in ("weekly", "monthly", "yearly"):
+    for level, real in (("daily", DailySteps), ("weekly", RollupSteps), ("monthly", RollupSteps)):
         steps = default_steps(RunRequest(level, TODAY), config)
-        assert steps == Steps() and steps.release is skip_release
+        assert isinstance(steps.collect.__self__, real)
+        assert isinstance(steps.release.__self__, Releaser)
+        assert isinstance(steps.commit.__self__, Committer)
+    yearly = default_steps(RunRequest("yearly", TODAY), config)
+    assert yearly == Steps() and yearly.release is skip_release
 
 
 def test_run_with_a_failed_release_exits_with_an_error(tmp_path, env, capsys):
