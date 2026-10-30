@@ -15,6 +15,7 @@ from aggregator.render import (
     render_digest,
     render_sources_section,
     with_sources_section,
+    without_sources,
 )
 from aggregator.sources import FetchResult, FetchStatus, Item
 
@@ -313,3 +314,24 @@ def test_an_unknown_source_id_falls_back_to_the_id():
         link_citations("- One. [1]", items, NAMES)
         == "- One. ([other](<https://other.example.com/1>))"
     )
+
+
+def test_without_sources_drops_the_links_and_the_sources_section():
+    body = (
+        "## Tech\n"
+        "- A lab released a model. ([Hacker News](<https://a.example/1>), "
+        "[The Verge 1](<https://b.example/2>))\n"
+        "- A link text with \\] escaped. ([A \\[b\\]](<https://c.example/>), Plain Source)\n"
+        "- The agency (ESA) launched a probe (finally)\n"
+        "\n## Sources\n- Hacker News\n\n### Warnings\n- The Verge: failed.\n"
+    )
+    assert without_sources(body) == (
+        "## Tech\n"
+        "- A lab released a model.\n"
+        "- A link text with \\] escaped.\n"
+        "- The agency (ESA) launched a probe (finally)\n"
+    )
+
+
+def test_without_sources_keeps_a_body_without_them():
+    assert without_sources("## Tech\n- A bullet.\n") == "## Tech\n- A bullet.\n"

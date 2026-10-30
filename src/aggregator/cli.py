@@ -28,6 +28,7 @@ from aggregator.daily import DailySteps
 from aggregator.gitsync import Committer
 from aggregator.pipeline import RunRequest, StepFailed, Steps, run
 from aggregator.release import Releaser
+from aggregator.rollup import RollupSteps
 from aggregator.schedule import LEVELS
 from aggregator.store import DEFAULT_DIGESTS_DIR
 
@@ -78,11 +79,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def default_steps(request: RunRequest, config: Config) -> Steps:
-    """The real steps where they exist (daily), the stubs for the other levels. Only the daily
-    level is committed and released; the stub digests of the other levels are not."""
+    """The real steps where they exist (daily, weekly, monthly), the stubs for yearly (#24). Only
+    the real levels are committed and released; the stub digests are not."""
+    publish = Steps(commit=Committer().commit, release=Releaser().release)
     if request.level == "daily":
-        publish = Steps(commit=Committer().commit, release=Releaser().release)
         return DailySteps(config).steps(publish)
+    if request.level in ("weekly", "monthly"):
+        return RollupSteps(config).steps(publish)
     return Steps()
 
 

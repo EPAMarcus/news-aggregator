@@ -1,8 +1,8 @@
 """Checks for the Markdown that Claude returns (architecture 3.4).
 
-`check_daily` lists every rule a daily digest body breaks, as sentences that can be sent back to
-Claude in the retry request. `truncate_bullets` is the fallback for a digest that is still too
-long after the retry.
+`check_daily` and `check_rollup` (weekly, monthly) list every rule a digest body breaks, as
+sentences that can be sent back to Claude in the retry request. `truncate_bullets` is the fallback
+for a daily digest that is still too long after the retry.
 
 The body format is (spec 5):
 
@@ -17,6 +17,9 @@ Each daily bullet ends with the indices of the input documents it is based on; c
 with links to the articles (`render.link_citations`).
 
 Every list item counts as a bullet, nested or not, so nesting cannot hide bullets from the limit.
+
+Rollup bodies have the same sections, but no citations, and a section may hold a short paragraph
+instead of bullets. Their limit is in words (`count_words`), headings not counted.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from enum import StrEnum
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+\S")
+_LIST_MARKER = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 # The citation at the end of a bullet: "[3]" or "[3, 7]"; "[3][7]" and "[3], [7]" are accepted.
 _CITATION = re.compile(r"\s*((?:,?\s*\[\s*\d+(?:\s*,\s*\d+)*\s*\])+)\s*$")
 
@@ -131,14 +135,15 @@ def bullet_limit_problem(body: str, max_bullets: int) -> str | None:
     )
 
 
-def structure_problems(body: str, categories: Sequence[str]) -> list[str]:
-    """Rule violations other than the bullet limit."""
+def structure_problems(body: str, categories: Sequence[str], *, prose: bool = False) -> list[str]:
+    """Rule violations other than the length limit. With `prose`, a section may contain plain
+    text paragraphs as well as bullets (the rollup levels)."""
     problems: list[str] = []
     allowed = list(categories)
     allowed_text = ", ".join(allowed)
     seen: list[str] = []
     section: str | None = None
-    section_bullets: dict[str, int] = {}
+    section_bullets: dict[str, int] = {}  # bullets, and paragraph lines with `prose`
     stray: list[str] = []
     bad_headings: list[str] = []
     orphan_subsections: list[str] = []
@@ -168,7 +173,10 @@ def structure_problems(body: str, categories: Sequence[str]) -> list[str]:
             else:
                 section_bullets[section] += 1
         elif line.kind is Kind.TEXT:
-            stray.append(line.raw.strip())
+            if prose and section is not None:
+                section_bullets[section] += 1
+            else:
+                stray.append(line.raw.strip())
 
     if not section_bullets:
         problems.append("The digest has no '## ' sections.")
@@ -181,16 +189,19 @@ def structure_problems(body: str, categories: Sequence[str]) -> list[str]:
     if orphan_subsections:
         problems.append("'### ' sub-sections must be inside a '## ' section.")
     if stray:
+        content = "inside a section" if prose else "'- ' bullets inside a section"
         problems.append(
-            "All content must be '- ' bullets inside a section, with no title, introduction or "
-            f'other text. Found: "{_shorten(stray[0])}".'
+            f"All content must be {content}, with no title, introduction or other text. "
+            f'Found: "{_shorten(stray[0])}".'
         )
     if nested:
         problems.append("Bullets must not be nested.")
     empty = [s for s, n in section_bullets.items() if n == 0]
     if empty:
         problems.append(
-            "Leave out sections without bullets: " + ", ".join(f'"## {s}"' for s in empty) + "."
+            f"Leave out sections without {'content' if prose else 'bullets'}: "
+            + ", ".join(f'"## {s}"' for s in empty)
+            + "."
         )
     order = [s for s in allowed if s in section_bullets]
     if [s for s in dict.fromkeys(seen) if s in allowed] != order:
@@ -208,6 +219,36 @@ def check_daily(
         problems.insert(0, limit)
     if documents is not None:
         problems += citation_problems(body, documents)
+    return problems
+
+
+def count_words(body: str) -> int:
+    """Words outside headings. List markers and tokens without a letter or digit (a dash) are
+    not words."""
+    words = 0
+    for line in parse(body):
+        if line.kind in (Kind.BULLET, Kind.CONTINUATION, Kind.TEXT):
+            text = _LIST_MARKER.sub("", line.raw, count=1) if line.kind is Kind.BULLET else line.raw
+            words += sum(any(c.isalnum() for c in token) for token in text.split())
+    return words
+
+
+def word_limit_problem(body: str, max_words: int) -> str | None:
+    count = count_words(body)
+    if count <= max_words:
+        return None
+    return (
+        f"The digest has {count} words, but at most {max_words} are allowed (headings not "
+        "counted). Shorten it: keep only the most significant developments and write more "
+        "concisely."
+    )
+
+
+def check_rollup(body: str, categories: Sequence[str], max_words: int) -> list[str]:
+    """Every rule a weekly or monthly body breaks; empty when it is valid."""
+    problems = structure_problems(body, categories, prose=True)
+    if limit := word_limit_problem(body, max_words):
+        problems.insert(0, limit)
     return problems
 
 

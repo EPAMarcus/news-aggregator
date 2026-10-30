@@ -5,8 +5,10 @@ import pytest
 from aggregator.validate import (
     bullet_ends,
     check_daily,
+    check_rollup,
     citation_problems,
     count_bullets,
+    count_words,
     parse,
     split_citation,
     structure_problems,
@@ -182,3 +184,35 @@ def test_check_daily_checks_citations_only_with_a_document_count():
 def test_bullet_ends_include_wrapped_lines():
     lines = parse("## Tech\n- One\n  wrapped\n- Two\n")
     assert [lines[i].raw for i in bullet_ends(lines)] == ["  wrapped", "- Two"]
+
+
+# --- rollup bodies -----------------------------------------------------------------------------
+
+
+def test_count_words_skips_headings_markers_and_dashes():
+    body = "## Tech\n### AI\n- One two three — four.\n  five\n\nSix seven.\n"
+    assert count_words(body) == 7
+
+
+def test_check_rollup_accepts_bullets_and_paragraphs():
+    body = "## Tech\nA short paragraph about the week.\n\n## SAP\n- One bullet.\n"
+    assert check_rollup(body, CATEGORIES, 50) == []
+
+
+def test_check_rollup_reports_the_word_limit_first():
+    body = "## Tech\n" + "word " * 20 + "\n"
+    problems = check_rollup(body, CATEGORIES, 10)
+    assert problems[0].startswith("The digest has 20 words, but at most 10")
+
+
+def test_check_rollup_rejects_text_outside_sections_and_unknown_sections():
+    body = "# Weekly digest\nIntro text.\n## Tech\n- A bullet.\n## Sources\n- Hacker News\n"
+    problems = " ".join(check_rollup(body, CATEGORIES, 100))
+    assert '"# Weekly digest"' in problems
+    assert 'Found: "Intro text."' in problems
+    assert '"## Sources" is not an allowed section' in problems
+
+
+def test_daily_structure_still_rejects_paragraphs():
+    problems = structure_problems("## Tech\nA paragraph.\n", CATEGORIES)
+    assert any("'- ' bullets inside a section" in p for p in problems)
