@@ -35,7 +35,7 @@ class Item:
     text: str  # plain text: the full text if the source has it, otherwise a summary
     published: datetime | None  # timezone-aware (UTC); None if the source gives no date
     id: str  # stable across runs, unique across sources: "<source_id>:<source-specific id>"
-    url: str | None = None  # kept for reference; digests do not contain links (spec 8)
+    url: str | None = None  # the article link behind a digest bullet's citation (spec 5)
 
 
 class FetchStatus(StrEnum):

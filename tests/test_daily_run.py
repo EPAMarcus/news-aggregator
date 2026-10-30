@@ -21,7 +21,15 @@ from aggregator.store import read_digest
 
 NOW = datetime(2026, 10, 19, 6, 3, tzinfo=UTC)
 DAY = date(2026, 10, 19)
-BODY = "## Tech\n- A lab released a model.\n## SAP\n- SAP shipped a release.\n"
+# Claude's answer cites the documents by index: 1 is sap-news:1, 2 and 3 are hacker-news:1 and :2.
+BODY = "## Tech\n- A lab released a model. [2, 3]\n## SAP\n- SAP shipped a release. [1]\n"
+# For runs with fewer documents: cites only document 1.
+ONE_SOURCE = "## Tech\n- A lab released a model. [1]\n"
+LINKED = (
+    "## Tech\n- A lab released a model. ([Hacker News 1](<https://hacker-news.example.com/1>), "
+    "[Hacker News 2](<https://hacker-news.example.com/2>))\n"
+    "## SAP\n- SAP shipped a release. ([SAP News Center](<https://sap-news.example.com/1>))\n"
+)
 
 
 def rss(source_id: str, name: str, topic: str | None = "Tech", enabled: bool = True) -> RssSource:
@@ -53,6 +61,7 @@ def item(source_id: str, n: int, age_hours: float = 1, topic: str | None = "Tech
         text=f"Text of {source_id} story {n}.",
         published=NOW - timedelta(hours=age_hours),
         id=f"{source_id}:{n}",
+        url=f"https://{source_id}.example.com/{n}",
     )
 
 
@@ -162,7 +171,7 @@ def test_daily_run_writes_a_valid_digest_with_the_sources_section(tmp_path, conf
     digest = read_digest("daily", "2026-10-19", h.digests)
     assert digest.meta.model == "claude-daily-test"
     assert digest.meta.inputs == ["sap-news", "hacker-news"]  # contributing sources only
-    assert digest.body == BODY + "\n## Sources\n- SAP News Center\n- Hacker News\n"
+    assert digest.body == LINKED + "\n## Sources\n- SAP News Center\n- Hacker News\n"
 
 
 def test_only_enabled_rss_sources_are_fetched(tmp_path, config):
@@ -195,7 +204,7 @@ def test_the_next_day_only_summarizes_new_items(tmp_path, config):
     h = harness(tmp_path, config)
     h.run()
 
-    tomorrow = harness(tmp_path, config, claude=Claude())
+    tomorrow = harness(tmp_path, config, claude=Claude(ONE_SOURCE))
     tomorrow.feeds.results["hacker-news"] = FetchResult.success(
         "hacker-news", [item("hacker-news", 2), item("hacker-news", 3)]
     )
@@ -236,7 +245,7 @@ def test_dry_run_does_not_touch_an_existing_state(tmp_path, config):
 
 
 def test_over_limit_twice_is_truncated_and_flagged(tmp_path, config):
-    long = "## Tech\n" + "".join(f"- Bullet {i}.\n" for i in range(12))
+    long = "## Tech\n" + "".join(f"- Bullet {i}. [1]\n" for i in range(12))
     h = harness(tmp_path, config, claude=Claude(long, long))
 
     assert h.run() is Outcome.WRITTEN
@@ -282,7 +291,7 @@ def test_no_new_items_produces_no_digest_and_an_error(tmp_path, config):
 def test_one_failing_source_does_not_fail_the_run(tmp_path, config):
     feeds = default_feeds()
     feeds.results["sap-news"] = RuntimeError("boom")
-    h = harness(tmp_path, config, feeds=feeds)
+    h = harness(tmp_path, config, feeds=feeds, claude=Claude(ONE_SOURCE))
 
     assert h.run() is Outcome.WRITTEN
 

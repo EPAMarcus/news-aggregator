@@ -1,9 +1,9 @@
 Write today's daily news digest from the news items in the data block.
 
-Each item is a `<document>` with a `source` attribute and, for most sources, a `topic` attribute
-such as `Tech` or `Tech/AI`. The topic is a strong hint for where the item belongs. Follow it
-unless the content clearly belongs to another category, for example a general news site covering
-many subjects. Items without a topic are placed by their content alone.
+Each item is a `<document>` with an `index` number, a `source` attribute and, for most sources,
+a `topic` attribute such as `Tech` or `Politics`. The topic is a strong hint for where the item
+belongs. Follow it unless the content clearly belongs to another category, for example a general
+news site covering many subjects. Items without a topic are placed by their content alone.
 
 Rules:
 
@@ -21,5 +21,8 @@ Rules:
 4. When several items report the same story, merge them into one bullet.
 5. Each bullet is one or two concise, high-level English sentences about what happened and why it
    matters. No per-article detail, no source names, no links, no URLs.
-6. Output only the sections. No title, no introduction, no closing remarks, no `Sources` section:
+6. End every bullet with the `index` numbers of all documents it is based on, in one pair of
+   square brackets: `[3]`, or `[3, 7]` for a merged story. Cite only documents that report the
+   story. The links to the articles are added from these numbers.
+7. Output only the sections. No title, no introduction, no closing remarks, no `Sources` section:
    the list of sources is added separately.

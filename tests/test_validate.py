@@ -3,8 +3,12 @@ from __future__ import annotations
 import pytest
 
 from aggregator.validate import (
+    bullet_ends,
     check_daily,
+    citation_problems,
     count_bullets,
+    parse,
+    split_citation,
     structure_problems,
     truncate_bullets,
 )
@@ -129,3 +133,52 @@ def test_truncation_keeps_blank_line_layout_tidy():
 
 def test_truncation_of_a_valid_digest_changes_nothing():
     assert truncate_bullets(VALID, 10) == VALID
+
+
+# --- citations ----------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "rest", "cited"),
+    [
+        ("- A story. [3]", "- A story.", [3]),
+        ("- A story. [3, 7]", "- A story.", [3, 7]),
+        ("- A story.[3,7]  ", "- A story.", [3, 7]),
+        ("- A story. [3][7]", "- A story.", [3, 7]),
+        ("- A story. [3], [7]", "- A story.", [3, 7]),
+        ("- A story.", "- A story.", []),
+        ("- [3] at the start does not count.", "- [3] at the start does not count.", []),
+        ("- A story. [see 3]", "- A story. [see 3]", []),
+    ],
+)
+def test_split_citation(text, rest, cited):
+    assert split_citation(text) == (rest, cited)
+
+
+def test_valid_citations_have_no_problems():
+    body = "## Tech\n- One. [1]\n- Two,\n  wrapped. [2, 3]\n"
+    assert citation_problems(body, 3) == []
+
+
+def test_uncited_bullets_are_reported():
+    (problem,) = citation_problems("## Tech\n- One.\n- Two. [1]\n- Three.\n", 3)
+    assert problem.startswith("2 bullet(s) do not end with the index numbers")
+    assert '"- One."' in problem
+
+
+def test_unknown_documents_are_reported():
+    (problem,) = citation_problems("## Tech\n- One. [0, 1]\n- Two. [9]\n", 3)
+    assert problem == (
+        "Bullets cite documents that do not exist: 0, 9. Valid index numbers are 1 to 3."
+    )
+
+
+def test_check_daily_checks_citations_only_with_a_document_count():
+    body = "## Tech\n- One.\n"
+    assert check_daily(body, CATEGORIES, 10) == []
+    assert "do not end with the index numbers" in check_daily(body, CATEGORIES, 10, 2)[0]
+
+
+def test_bullet_ends_include_wrapped_lines():
+    lines = parse("## Tech\n- One\n  wrapped\n- Two\n")
+    assert [lines[i].raw for i in bullet_ends(lines)] == ["  wrapped", "- Two"]

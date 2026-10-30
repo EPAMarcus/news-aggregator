@@ -10,6 +10,7 @@ from aggregator.render import (
     FrontMatter,
     SourceWarning,
     contributing_sources,
+    link_citations,
     parse_digest,
     render_digest,
     render_sources_section,
@@ -214,3 +215,101 @@ def test_digest_with_sources_section_round_trips():
     body = with_sources_section("## Tech\n- x\n", render_sources_section([SOURCES[1]]))
     digest = make_digest().model_copy(update={"body": body})
     assert parse_digest(render_digest(digest)).body == body
+
+
+# --- links behind the daily bullets -----------------------------------------------------------
+
+NAMES = {"hn": "Hacker News", "verge": "The Verge", "odd": "Odd [Name]"}
+
+
+def linked_item(source_id: str, n: int, url: str | None = "default") -> Item:
+    return Item(
+        source_id=source_id,
+        topic=None,
+        title=f"t{n}",
+        text="x",
+        published=None,
+        id=f"{source_id}:{n}",
+        url=f"https://{source_id}.example.com/{n}" if url == "default" else url,
+    )
+
+
+LINK_ITEMS = [linked_item("hn", 1), linked_item("verge", 2), linked_item("hn", 3)]
+
+
+def test_citations_become_links_to_the_cited_items():
+    body = "## Tech\n- One. [1]\n- Two. [2, 1]\n"
+    assert link_citations(body, LINK_ITEMS, NAMES) == (
+        "## Tech\n"
+        "- One. ([Hacker News](<https://hn.example.com/1>))\n"
+        "- Two. ([The Verge](<https://verge.example.com/2>), "
+        "[Hacker News](<https://hn.example.com/1>))\n"
+    )
+
+
+def test_two_items_of_one_source_are_numbered():
+    out = link_citations("- One. [1, 3]", LINK_ITEMS, NAMES)
+    assert out == (
+        "- One. ([Hacker News 1](<https://hn.example.com/1>), "
+        "[Hacker News 2](<https://hn.example.com/3>))"
+    )
+
+
+def test_unknown_and_repeated_indices_are_dropped():
+    assert link_citations("- One. [1, 9, 1]", LINK_ITEMS, NAMES) == (
+        "- One. ([Hacker News](<https://hn.example.com/1>))"
+    )
+
+
+def test_the_same_url_from_two_items_is_one_link():
+    items = [
+        linked_item("hn", 1, url="https://a.example/x"),
+        linked_item("verge", 2, url="https://a.example/x"),
+    ]
+    assert (
+        link_citations("- One. [1, 2]", items, NAMES)
+        == "- One. ([Hacker News](<https://a.example/x>))"
+    )
+
+
+def test_a_bullet_with_only_unknown_indices_loses_its_citation():
+    assert link_citations("- One. [9]\n- Two.\n", LINK_ITEMS, NAMES) == "- One.\n- Two.\n"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        None,
+        "javascript:alert(1)",
+        "https://a.example/x>)[evil](https://b",
+        "https://a.example/a b",
+        "ftp://a/x",
+        "https://",
+    ],
+)
+def test_a_missing_or_unsafe_url_is_shown_as_the_name_without_a_link(url):
+    items = [linked_item("hn", 1, url=url)]
+    assert link_citations("- One. [1]", items, NAMES) == "- One. (Hacker News)"
+
+
+def test_link_text_is_escaped():
+    items = [linked_item("odd", 1)]
+    assert (
+        link_citations("- One. [1]", items, NAMES)
+        == "- One. ([Odd \\[Name\\]](<https://odd.example.com/1>))"
+    )
+
+
+def test_wrapped_bullets_and_other_lines_are_handled():
+    body = "## Tech [1]\n- One,\n  wrapped. [2]\nText [1]\n"
+    assert link_citations(body, LINK_ITEMS, NAMES) == (
+        "## Tech [1]\n- One,\n  wrapped. ([The Verge](<https://verge.example.com/2>))\nText [1]\n"
+    )
+
+
+def test_an_unknown_source_id_falls_back_to_the_id():
+    items = [linked_item("other", 1)]
+    assert (
+        link_citations("- One. [1]", items, NAMES)
+        == "- One. ([other](<https://other.example.com/1>))"
+    )
